@@ -32,12 +32,9 @@ Developer notes
 - Run `main.py` or import `Simulation` from `core/simulation.py` to run programmatically.
 - To change movement mode call `Simulation(spec, movement_mode=...)` with `aco`, `distance`, or `random`.
 - The UI lives under `ui/` — modifies Qt widgets, controls and graphing of results.
-
-Tests
-- There are no automated tests yet; please consider adding unit tests in `core/` for core algorithms.
+  
 
 Contribution
 - Create issues, forks and PRs in https://github.com/Sathvikar01/Fire_Evacuation_System
 
-License
-- Please add or update `LICENSE` to the repo as desired.
+
