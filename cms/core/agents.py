@@ -1,4 +1,5 @@
 import numpy as np
+from collections import deque
 from typing import List, Tuple, Dict, Optional
 from .grid import Grid, EMPTY, WALL, EXIT
 from config import (
@@ -14,7 +15,7 @@ from config import (
     STUCK_ESCAPE_HAZARD_WEIGHT, STUCK_ESCAPE_CONGESTION_WEIGHT,
 )
 from config import EXPLORATION_EPS, EXPLORATION_DECAY, EXPLORATION_MIN
-from .pheromones import reinforce_success
+from .pheromones import reinforce_success, suppress_path, evaporate_region
 
 def manhattan(a: Tuple[int,int], b: Tuple[int,int]) -> int:
     return abs(a[0]-b[0]) + abs(a[1]-b[1])
@@ -73,6 +74,10 @@ class AgentEngine:
         self.last_dist: Dict[int, Optional[int]] = {aid: None for aid in grid.agent_ids}
         self.stuck_counter: Dict[int, int] = {aid: 0 for aid in grid.agent_ids}  # Track stuck agents
         self.hybrid_escape_until = 0  # Tick timestamp until which hybrid escape mode stays active
+        self.recent_positions: Dict[int, deque[Tuple[int, int]]] = {
+            aid: deque(maxlen=32) for aid in grid.agent_ids
+        }
+        self.escape_cooldown: Dict[int, int] = {aid: -9999 for aid in grid.agent_ids}
         
         # Metrics tracking
         self.metrics = AgentMetrics() if ENABLE_METRICS_TRACKING else None
@@ -87,6 +92,29 @@ class AgentEngine:
 
     def set_distance_suppression(self, value: float):
         self.distance_suppression = float(max(0.0, min(0.95, value)))
+
+    def _record_position(self, agent_id: int, pos: Tuple[int, int]):
+        history = self.recent_positions.setdefault(agent_id, deque(maxlen=32))
+        history.append(pos)
+        return history
+
+    def _handle_local_minima(self, agent_id: int, pos: Tuple[int, int]):
+        if not STUCK_ESCAPE_ENABLED:
+            return
+        last_trigger = self.escape_cooldown.get(agent_id, -9999)
+        if self.current_tick - last_trigger < max(4, STUCK_ESCAPE_DURATION // 3):
+            return
+
+        path = self.last_paths.get(agent_id, [])[-20:]
+        if path:
+            suppress_path(self.grid.pheromone, path, factor=0.5)
+
+        recent = list(self.recent_positions.get(agent_id, []))
+        if recent:
+            suppress_path(self.grid.pheromone, recent[-16:], factor=0.55)
+
+        evaporate_region(self.grid.pheromone, pos[0], pos[1], radius=1)
+        self.escape_cooldown[agent_id] = self.current_tick
 
     def _get_exit_targets(self) -> List[Tuple[int, int]]:
         if not self.exit_cells:
@@ -462,6 +490,7 @@ class AgentEngine:
         casualty_this_step = set()
 
         for agent_id, (r, c) in active_pairs:
+            self._record_position(agent_id, (r, c))
             if self.grid.fire[r, c] > FIRE_DEATH_THRESHOLD:
                 self.casualties += 1
                 casualty_this_step.add(agent_id)
@@ -512,6 +541,8 @@ class AgentEngine:
                 last_known_dist = self.last_dist.get(agent_id)
                 if last_known_dist is not None and current_dist >= last_known_dist:
                     self.stuck_counter[agent_id] = min(255, self.stuck_counter.get(agent_id, 0) + 1)
+                    if self.stuck_counter[agent_id] == STUCK_ESCAPE_AGENT_TICKS:
+                        self._handle_local_minima(agent_id, (r, c))
                 else:
                     self.stuck_counter[agent_id] = 0
 
@@ -572,6 +603,8 @@ class AgentEngine:
         new_prev: Dict[int, Tuple[int, int]] = {}
         new_ldist: Dict[int, int] = {}
         new_stuck: Dict[int, int] = {}
+        new_recent: Dict[int, deque[Tuple[int, int]]] = {}
+        new_escape_cooldown: Dict[int, int] = {}
 
         for aid, start_pos in active_pairs:
             if aid in evacuated_this_step or aid in casualty_this_step:
@@ -592,6 +625,8 @@ class AgentEngine:
             new_prev[aid] = from_pos
             new_ldist[aid] = self._distance_to_goal(to_pos)
             new_stuck[aid] = self.stuck_counter.get(aid, 0)
+            new_recent[aid] = self.recent_positions.get(aid, deque(maxlen=32))
+            new_escape_cooldown[aid] = self.escape_cooldown.get(aid, -9999)
 
             if self.metrics:
                 self.metrics.path_length[aid] = self.metrics.path_length.get(aid, 0) + 1
@@ -602,6 +637,8 @@ class AgentEngine:
         self.prev_pos = new_prev
         self.last_dist = new_ldist
         self.stuck_counter = new_stuck
+        self.recent_positions = new_recent
+        self.escape_cooldown = new_escape_cooldown
 
         if self.metrics:
             for agent_id in list(self.last_paths.keys()):
@@ -610,3 +647,5 @@ class AgentEngine:
                     self.prev_pos.pop(agent_id, None)
                     self.last_dist.pop(agent_id, None)
                     self.stuck_counter.pop(agent_id, None)
+                    self.recent_positions.pop(agent_id, None)
+                    self.escape_cooldown.pop(agent_id, None)

@@ -5,7 +5,7 @@ from PyQt5.QtCore import QTimer
 
 from .grid import Grid, GridSpec, EXIT
 from .agents import AgentEngine
-from .pheromones import evaporate, deposit, punish_area, compute_dynamic_rho
+from .pheromones import evaporate, punish_area, compute_dynamic_rho, evaporate_region
 from .hazards import step_fire_and_smoke
 from .ants import AntPrecomputer
 from .metrics import SimulationMetrics
@@ -64,6 +64,7 @@ class Simulation:
 
         self.grid = Grid(spec, self.rng, fire_params=self.fire_params)
         self.seed = seed
+        self._exit_fire_blocked_prev = np.zeros_like(self.grid.exit_compromised, dtype=bool)
         
         # Movement and pheromone control
         self.movement_mode = movement_mode if movement_mode else MOVEMENT_MODE_DEFAULT
@@ -214,6 +215,7 @@ class Simulation:
     def regenerate(self, spec: GridSpec):
         self.rng = np.random.default_rng()
         self.grid = Grid(spec, self.rng, fire_params=self.fire_params)
+        self._exit_fire_blocked_prev = np.zeros_like(self.grid.exit_compromised, dtype=bool)
         self.ants = AntPrecomputer(self.grid, self.rng)
         if self._use_pheromone():
             self.ants.run_chunk(iters=60)
@@ -276,8 +278,10 @@ class Simulation:
             self.grid.seed_initial_fire()
             self.grid.exit_compromised.fill(False)
             self.grid.reset_pheromone()
+            self._exit_fire_blocked_prev = np.zeros_like(self.grid.exit_compromised, dtype=bool)
         else:
             self.grid.exit_compromised.fill(False)
+            self._exit_fire_blocked_prev = np.zeros_like(self.grid.exit_compromised, dtype=bool)
             self._restore_rng_state()
         self.ants = AntPrecomputer(self.grid, self.rng)
         if self._use_pheromone() and not restored:
@@ -303,10 +307,12 @@ class Simulation:
         exits = np.argwhere(self.grid.types == EXIT)
         self.grid.exit_compromised.fill(False)
         compromised = False
+        new_fire_mask = np.zeros_like(self._exit_fire_blocked_prev, dtype=bool)
         for r, c in exits:
             blocked = False
             if self.grid.fire[r, c] > FIRE_EXIT_COMPROMISED_THRESHOLD:
                 blocked = True
+                new_fire_mask[r, c] = True
             else:
                 walls = 0
                 total = 0
@@ -320,6 +326,11 @@ class Simulation:
             if blocked:
                 self.grid.exit_compromised[r, c] = True
             compromised = compromised or blocked
+        newly_blocked = np.logical_and(new_fire_mask, ~self._exit_fire_blocked_prev)
+        if np.any(newly_blocked):
+            for (r, c) in np.argwhere(newly_blocked):
+                evaporate_region(self.grid.pheromone, int(r), int(c), radius=3)
+        self._exit_fire_blocked_prev = new_fire_mask
         return compromised
 
     def _update_congestion_map(self):
@@ -414,14 +425,6 @@ class Simulation:
                 dynamic_rho_snapshot = RHO
                 evaporate(self.grid.pheromone, self.grid.fire)
         
-        # Agent pheromone deposits (only if using pheromones)
-        # If DEPOSIT_ON_EXIT is enabled, skip continual per-tick deposits
-        if self._use_pheromone() and self.enable_agent_deposits and not DEPOSIT_ON_EXIT:
-            for agent_id in self.engine.last_paths:
-                path = self.engine.last_paths[agent_id]
-                if len(path) >= 2:
-                    deposit(self.grid.pheromone, path[-10:], scale=5.0)  # Increased from 3.0
-
         if self.tick_counter % CONGESTION_UPDATE_TICKS == 0 and len(self.grid.agents) > 3:
             self._update_congestion_map()
 

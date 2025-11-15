@@ -18,7 +18,7 @@ MOVEMENT_MODE_DEFAULT = MOVEMENT_MODE_ACO
 ENABLE_ANT_PRECOMPUTE = True     # Enable ant-based pheromone computation
 ENABLE_AGENT_DEPOSITS = True     # Enable agent pheromone deposits
 USE_DUAL_PHEROMONE = False       # Separate ant vs agent pheromone channels (future)
-DEPOSIT_ON_EXIT = False          # Allow continual pheromone deposits for stronger trail reinforcement
+DEPOSIT_ON_EXIT = True           # Agents deposit trails only after reaching a valid exit
 
 # Metrics and experiments
 ENABLE_METRICS_TRACKING = True   # Track detailed per-agent and per-run metrics

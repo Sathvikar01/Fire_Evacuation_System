@@ -1,4 +1,5 @@
 import numpy as np
+from typing import Sequence
 from config import RHO, Q, FIRE_LOCAL_EVAP_BONUS, PHEROMONE_FLOOR, FIRE_LOW_THRESHOLD
 from config import RHO_MIN, RHO_MAX, RHO_STUCK_MULT, RHO_AGENT_GAMMA, RHO_CONGESTION_MULT, STUCK_FRAC_TRIGGER, PER_CELL_RHO
 
@@ -94,3 +95,18 @@ def punish_area(pheromone: np.ndarray, center_r: int, center_c: int, radius: int
     c0 = max(0, center_c - radius); c1 = min(C, center_c + radius + 1)
     pheromone[r0:r1, c0:c1] *= factor
     np.maximum(pheromone, PHEROMONE_FLOOR, out=pheromone)
+
+def evaporate_region(pheromone: np.ndarray, center_r: int, center_c: int, radius: int = 3):
+    """Force pheromone around a critical cell back to the floor value."""
+    R, C = pheromone.shape
+    r0 = max(0, center_r - radius); r1 = min(R, center_r + radius + 1)
+    c0 = max(0, center_c - radius); c1 = min(C, center_c + radius + 1)
+    pheromone[r0:r1, c0:c1] = PHEROMONE_FLOOR
+
+def suppress_path(pheromone: np.ndarray, path_cells: Sequence[tuple[int, int]], factor: float = 0.55):
+    """Reduce pheromone along a path to help agents escape local minima."""
+    if not path_cells:
+        return
+    unique = { (int(r), int(c)) for r, c in path_cells }
+    for r, c in unique:
+        pheromone[r, c] = max(PHEROMONE_FLOOR, float(pheromone[r, c]) * factor)
