@@ -54,16 +54,37 @@ def _mean(values: Iterable[Optional[float]]) -> Optional[float]:
 
 
 def aggregate_mode_metrics(runs: Iterable[MetricPayload]) -> AggregatedMetrics:
-    """Collapse multiple run payloads for a mode into simple averages."""
+    """Collapse multiple run payloads for a mode into simple averages.
+
+    Filters non-finite (NaN/inf) values that previously poisoned means.
+    """
+    import math as _math
     runs = list(runs)
+    def _clean_mean(key_primary, key_fallback=None):
+        vals = []
+        for r in runs:
+            v = r.get(key_primary)
+            if v is None and key_fallback:
+                v = r.get(key_fallback)
+            if v is None:
+                continue
+            try:
+                fv = float(v)
+                if _math.isfinite(fv):
+                    vals.append(fv)
+            except Exception:
+                continue
+        if not vals:
+            return None
+        return sum(vals) / float(len(vals))
     return {
         "count": float(len(runs)),
-        "completion": _mean(run.get("completion_rate") for run in runs),
-        "casualty": _mean(run.get("casualty_rate") for run in runs),
-        "avg_time": _mean(run.get("average_evacuation_time") for run in runs),
-        "ticks": _mean(run.get("total_ticks") for run in runs),
-        "path": _mean(run.get("avg_path_length_evacuated") for run in runs),
-        "congestion": _mean(run.get("congestion_ratio") for run in runs),
+        "completion": _clean_mean("completion_rate", "completion"),
+        "casualty": _clean_mean("casualty_rate", "casualty"),
+        "avg_time": _clean_mean("average_evacuation_time", "avg_time"),
+        "ticks": _clean_mean("total_ticks", "ticks"),
+        "path": _clean_mean("avg_path_length_evacuated", "path"),
+        "congestion": _clean_mean("congestion_ratio", "congestion"),
     }
 
 
@@ -72,14 +93,13 @@ def _normalise(value: Optional[float], rng: Optional[Tuple[float, float]], inver
         return 0.0
     low, high = rng
     if high - low <= 1e-9:
-        return 1.0
+        # Research: equal metrics → neutral 0.5 not 1.0 (previously inflated ties)
+        return 0.5
     ratio = (value - low) / (high - low)
     if invert:
         ratio = 1.0 - ratio
-    if not invert:
-        ratio = max(0.0, min(1.0, ratio))
-    else:
-        ratio = max(0.0, min(1.0, ratio))
+    # Single clamp (removed duplicate branches)
+    ratio = max(0.0, min(1.0, ratio))
     return ratio
 
 
@@ -104,11 +124,19 @@ def score_modes(metrics: Mapping[str, AggregatedMetrics]) -> ScoreBoard:
 
         for key in _METRIC_KEYS:
             value = agg.get(key)
+            # Keep detail as 0.0 for missing so UI doesn't show NaN, but penalise missing
+            # avg_time (no evacuation) as worst-case rather than skipping weight.
             detail[key] = float(value) if value is not None else 0.0
-            if value is None:
-                continue
             rng = ranges.get(key)
             weight = _METRIC_WEIGHTS.get(key, 1.0)
+            if value is None:
+                # Research: penalise missing avg_time/ticks/path as worst score
+                # (previously skipped weight → artificially inflated score for no-evac runs)
+                if key in ("avg_time", "ticks", "path"):
+                    # Treat missing as worst (0 after normalisation for inverted metrics)
+                    weighted_score += 0.0
+                    total_weight += weight
+                continue
             score = _normalise(value, rng, _METRIC_INVERT.get(key, False))
             weighted_score += score * weight
             total_weight += weight
