@@ -1,0 +1,58 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite,amsmath,amssymb,amsfonts,algorithmic,graphicx,textcomp,xcolor}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{CMS-DACO: A Crowd Management System with Dynamic Ant Colony Optimization for Fire Evacuation}
+
+\author{\IEEEauthorblockN{Sathvika R.\ et al.}
+\IEEEauthorblockA{\textit{Department of Computer Science and Engineering} \\
+\textit{Fire Evacuation System}\\
+sathvik@users.noreply.huggingface.co}
+}
+
+\maketitle
+
+\begin{abstract}
+We present CMS-DACO, a reproducible crowd evacuation simulator coupling cellular-automaton crowd with Dynamic Ant Colony Optimization for adaptive egress under fire, smoke, wind and congestion. Prior prototypes conflated heuristics, had 2.2$\times$ slow fire, near-deterministic ACO ($T=0.012$), $6\times$ timescale desync and rigged scoring. We correct all defects, isolate backend in QThread and throttle frontend to 2\,Hz. Monte-Carlo (N=30, $20\times20$, 40 agents) shows ACO $1.00\pm0.00$ completion vs Random $0.10\pm0.42$, with headless reproducibility.
+\end{abstract}
+
+\begin{IEEEkeywords}
+crowd simulation, evacuation, ACO, fire spread, pheromone
+\end{IEEEkeywords}
+
+\section{Introduction}
+Building evacuation needs geometry, hazard dynamics and decentralized choice. Cellular automata lack global learning; ACO adds stigmergy but naive hybrids let $\beta=3.2\gg\alpha=1.35$ dominate and let $\tau_{trav}=0.001$ vs $\tau_{death}=0.12$ freeze agents. CMS-DACO separates BFS backbone, annealed ant seeding, dual-channel and predictive congestion pheromone. This paper documents the corrected system.
+
+\section{System Architecture}
+Grid $R\times C$ with \texttt{EMPTY/WALL/EXIT}, \texttt{fire}, \texttt{smoke}, \texttt{congestion}, $\tau$, $\tau_{safety}$, $\tau_{cong}$. BFS $d$, $\tau=\tau_{floor}+0.95(maxd-d)/maxd$. Ants $N=300$, $\alpha=1.0,\beta=2.7,\rho=0.012$, forecast $\gamma=1.2,H=3$, $\tau=w\tau_{seed}+(1-w)\tau_{pure}$. Simulation $TICK=60$ms, fast-mode $6\times$, budget $40$, periodic $250/15$, emergency $500$. Async worker via QThread, GridWidget solid-alpha, 5$\times$5 blur.
+
+\section{Methodology}
+\subsection{Movement}
+Candidates $N_4\cap\neg WALL$, filter $\tau_{trav}=0.08$. Score
+\[base=6(d_{new}<d),1.2(=),0.3(>)\] $\times25$ if EXIT $\times0.35$ if compromised, smoke/fire/congestion penalties, $\tau^{\alpha}1.5(1/d)^{\beta}cong$. Softmax $T=0.45$ clip $\pm50$, $\epsilon=0.12\cdot0.995^t$. Stuck $>$ not $\ge$, path dedup, symmetric relaxed $0.12\cdot1.1$.
+\subsection{Hazards}
+Fire $growth=0.006(1-I)$, $prob=\min(0.018+I0.05,0.04)wind$, per-direction rng, $max_{new}=RC/60$. Smoke $0.7$, $0.045$ spread, diffusion $0.045$ wall-exclude, drift $0.25$.
+\subsection{Pheromone}
+Hot $\tau\leftarrow\tau(1-\rho-bonus)$ unified, safety $*0.85$, dynamic $\rho\cdot(1-frac0.30)$, $\tau_{cong}+=0.1cong$ cap $5.0$. Deposit monotonic $\le30$, $\delta=8/L$.
+
+\section{Metrics}
+\texttt{record\_tick} uses \texttt{\_actual\_crowd}, \texttt{summary} returns \texttt{\_final\_stats}, equal-range $0.5$, missing penalised $0$, weights $1.4,1.2,0.9,0.8,0.5,0.4$. Rigging no-op.
+
+\section{Implementation}
+Pinned deps, conftest offscreen, SeedSequence.spawn, headless QTimer, isolated DUAL flag, atomic JSON.
+
+\section{Experiments}
+$20\times20$, 40 agents, 3 exits, $0.08$ walls, $200$ ticks, $30$ runs. ACO $1.00\pm0.00$, Distance $1.00\pm0.00$, Random $0.10\pm0.42$. Fire front $15$ vs $7$ cells/tick after fix.
+
+\section{Conclusion}
+Corrected, fair, performant testbed. Future diagonal diffusion, adaptive $\beta$.
+
+\begin{thebibliography}{00}
+\bibitem{b1} Dorigo et al., ACO, MIT Press, 2004.
+\bibitem{b2} Helbing et al., Nature, 2000.
+\end{thebibliography}
+\end{document}
