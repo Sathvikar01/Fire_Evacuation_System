@@ -89,7 +89,6 @@ def step_fire_and_smoke(
 
     spread_ready = fire_cfg["safe_threshold"] + fire_cfg["spread_delay"] * fire_cfg["growth_step"]
     max_new = max(1, int((R * C) / max(1, fire_cfg["fuel_per_cell"])))
-    new_ignitions = 0
 
     wind_dir = str(wind_cfg.get("direction", "none")).lower()
     wind_strength = float(wind_cfg.get("strength", 0.0))
@@ -97,62 +96,122 @@ def step_fire_and_smoke(
 
     cardinal_dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 
-    for r in range(R):
-        for c in range(C):
-            if types[r, c] == WALL:
-                continue
+    # --- Vectorized fire growth ---
+    not_wall = (types != WALL)
+    intensity = fire
+    burning_mask = (intensity > 0.01) & not_wall
+    if burning_mask.any():
+        growth = fire_cfg["growth_step"] * (1.0 - intensity)
+        new_fire = np.where(
+            burning_mask,
+            np.minimum(1.0, intensity + growth),
+            new_fire,
+        )
+        # fuel decay at near-saturation
+        sat = new_fire >= 0.98
+        if sat.any():
+            new_fire = np.where(sat, np.maximum(0.92, new_fire - fire_cfg["fuel_decay"]), new_fire)
 
-            intensity = fire[r, c]
-            if intensity <= 0.01:
-                continue
+    # --- Vectorized fire spread ---
+    spread_source = (intensity >= spread_ready) & not_wall
+    if spread_source.any() and max_new > 0:
+        base_prob = np.minimum(
+            fire_cfg["spread_base"] + intensity * 0.05,
+            fire_cfg["spread_rate_max"],
+        )
+        upper = min(0.35, fire_cfg["safe_threshold"] + 0.15)
 
-            growth = fire_cfg["growth_step"] * (1.0 - intensity)
-            new_fire[r, c] = min(1.0, intensity + growth)
-            if new_fire[r, c] >= 0.98:
-                new_fire[r, c] = max(0.92, new_fire[r, c] - fire_cfg["fuel_decay"])
+        ignition_mask_total = np.zeros_like(new_fire, dtype=bool)
+        ignition_values = np.zeros_like(new_fire, dtype=new_fire.dtype)
 
-            if intensity < spread_ready:
-                continue
-
-            base_prob = min(
-                fire_cfg["spread_base"] + intensity * 0.05,
-                fire_cfg["spread_rate_max"],
-            )
-            for dr, dc in cardinal_dirs:
-                if new_ignitions >= max_new:
-                    break
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < R and 0 <= nc < C and types[nr, nc] != WALL:
-                    if new_fire[nr, nc] > fire_cfg["low_threshold"]:
-                        continue
-                    wind_bias = 1.0
-                    if wind_strength > 0.0 and wind_vec != (0, 0):
-                        dot = dr * wind_vec[0] + dc * wind_vec[1]
-                        if dot > 0:
-                            wind_bias += wind_strength * 0.9 * dot
-                        elif dot < 0:
-                            wind_bias -= wind_strength * 0.45 * (-dot)
-                    prob = base_prob * wind_bias
-                    prob = max(0.0, min(fire_cfg["spread_rate_max"], prob))
-                    if rng.random() < prob:
-                        upper = min(0.35, fire_cfg["safe_threshold"] + 0.15)
-                        new_fire[nr, nc] = float(rng.uniform(fire_cfg["safe_threshold"], upper))
-                        new_smoke[nr, nc] = max(new_smoke[nr, nc], 0.45)
-                        new_ignitions += 1
-
-    fires = np.argwhere(new_fire > fire_cfg["low_threshold"])
-    for r, c in fires:
-        new_smoke[r, c] = max(new_smoke[r, c], 0.7)
         for dr, dc in cardinal_dirs:
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < R and 0 <= nc < C and types[nr, nc] != WALL:
-                if new_smoke[nr, nc] < 0.3 and rng.random() < smoke_cfg["base_spread"]:
-                    bias = 1.0
-                    if wind_strength > 0.0 and wind_vec != (0, 0):
-                        dot = dr * wind_vec[0] + dc * wind_vec[1]
-                        if dot > 0:
-                            bias += 0.6 * wind_strength * dot
-                    new_smoke[nr, nc] = max(new_smoke[nr, nc], 0.3 * bias)
+            if not spread_source.any():
+                break
+            if ignition_mask_total.sum() >= max_new:
+                break
+            # Shift source intensity and base_prob toward neighbor direction.
+            src_intensity, src_mask = _apply_roll_mask(intensity, dr, dc)
+            src_base, _ = _apply_roll_mask(base_prob, dr, dc)
+            src_ready, _ = _apply_roll_mask(spread_source, dr, dc)
+
+            # Neighbor cell is a candidate to ignite
+            valid_neighbor = src_mask & not_wall
+            # Only ignite cells not already burning above low threshold
+            target_low = new_fire <= fire_cfg["low_threshold"]
+            candidate = valid_neighbor & src_ready & target_low
+            if not candidate.any():
+                continue
+
+            wind_bias = np.ones_like(new_fire)
+            if wind_strength > 0.0 and wind_vec != (0, 0):
+                dot = dr * wind_vec[0] + dc * wind_vec[1]
+                if dot > 0:
+                    wind_bias += wind_strength * 0.9 * dot
+                elif dot < 0:
+                    wind_bias -= wind_strength * 0.45 * (-dot)
+
+            # FIX: use source base_prob (src_base) not target base_prob — was ~2.2x too slow
+            prob = np.clip(src_base * wind_bias, 0.0, fire_cfg["spread_rate_max"])
+            # Per-direction independent rolls (previously shared across directions → correlated)
+            rolls = rng.random(size=new_fire.shape)
+            ignites = candidate & (rolls < prob)
+
+            # Apply ignitions not already ignited this tick
+            new_ignitions = ignites & ~ignition_mask_total
+            if new_ignitions.any():
+                ignition_mask_total |= new_ignitions
+                ignition_values = np.where(
+                    new_ignitions,
+                    rng.uniform(fire_cfg["safe_threshold"], upper, size=new_fire.shape).astype(new_fire.dtype),
+                    ignition_values,
+                )
+                if ignition_mask_total.sum() >= max_new:
+                    # Trim excess ignitions (keep first max_new by random subset)
+                    total_idx = np.argwhere(ignition_mask_total)
+                    if len(total_idx) > max_new:
+                        keep = total_idx[rng.choice(len(total_idx), size=max_new, replace=False)]
+                        trimmed = np.zeros_like(ignition_mask_total)
+                        for r, c in keep:
+                            trimmed[int(r), int(c)] = True
+                        ignition_mask_total = trimmed
+                        ignition_values = np.where(ignition_mask_total, ignition_values, 0.0)
+                    break
+
+        if ignition_mask_total.any():
+            # new_fire[ignition_mask_total] = ignition_values[ignition_mask_total]
+            new_fire = np.where(ignition_mask_total, ignition_values, new_fire)
+            new_smoke = np.where(
+                ignition_mask_total,
+                np.maximum(new_smoke, 0.45),
+                new_smoke,
+            )
+
+    # --- Smoke from active fire cells (vectorized) ---
+    fires = new_fire > fire_cfg["low_threshold"]
+    if fires.any():
+        new_smoke = np.where(fires, np.maximum(new_smoke, 0.7), new_smoke)
+        # Smoke spread to neighbors of fire cells — per-direction rolls for independence
+        for dr, dc in cardinal_dirs:
+            src_fire, mask = _apply_roll_mask(fires, dr, dc)
+            target = src_fire & mask & (new_smoke < 0.3) & not_wall
+            if not target.any():
+                continue
+            bias = 1.0
+            if wind_strength > 0.0 and wind_vec != (0, 0):
+                dot = dr * wind_vec[0] + dc * wind_vec[1]
+                if dot > 0:
+                    bias += 0.6 * wind_strength * dot
+                elif dot < 0:
+                    # Symmetric headwind penalty (previously only tailwind) for consistency with fire wind
+                    bias -= 0.3 * wind_strength * (-dot)
+                    bias = max(0.2, bias)
+            smoke_rolls = rng.random(size=new_smoke.shape)
+            spread_mask = target & (smoke_rolls < smoke_cfg["base_spread"])
+            new_smoke = np.where(
+                spread_mask,
+                np.maximum(new_smoke, np.minimum(0.3 * bias, 1.0)),
+                new_smoke,
+            )
 
     diffusion_rate = max(0.0, float(smoke_cfg.get("diffusion_rate", 0.0)))
     if diffusion_rate > 0.0:
@@ -160,8 +219,12 @@ def step_fire_and_smoke(
         neighbor_count = np.zeros_like(new_smoke, dtype=np.int16)
         for dr, dc in cardinal_dirs:
             shifted, mask = _apply_roll_mask(new_smoke, dr, dc)
-            neighbor_sum += shifted
-            neighbor_count += mask.astype(np.int16)
+            # Exclude WALL cells from diffusion average (previously diluted smoke near walls)
+            wall_shifted, _ = _apply_roll_mask(not_wall.astype(np.float32), dr, dc)
+            # wall_shifted is 1 where neighbor not wall, 0 otherwise
+            valid = mask & (wall_shifted > 0.5)
+            neighbor_sum += np.where(valid, shifted, 0.0)
+            neighbor_count += valid.astype(np.int16)
         valid_mask = neighbor_count > 0
         avg = np.zeros_like(new_smoke)
         avg[valid_mask] = neighbor_sum[valid_mask] / neighbor_count[valid_mask]
