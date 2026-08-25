@@ -34,3 +34,7 @@ def seed_pheromone_from_dist(grid):
     scaled = np.clip(scaled, 0.0, 1.0)
     # set base pheromone stronger closer to exits
     grid.pheromone[valid] = PHEROMONE_FLOOR + 0.95 * scaled[valid]
+    # R5: Seed the safety channel identically — both start from the distance
+    # backbone and ants reshape them independently.
+    if hasattr(grid, 'pheromone_safety'):
+        grid.pheromone_safety[valid] = PHEROMONE_FLOOR + 0.95 * scaled[valid]
