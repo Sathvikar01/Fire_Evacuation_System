@@ -9,9 +9,11 @@ EXITS_DEFAULT = 3
 WALL_DENSITY_DEFAULT = 0.05
 
 # Movement modes
-MOVEMENT_MODE_ACO = "aco"            # Dynamic ACO (default)
+MOVEMENT_MODE_ACO = "aco"            # Dynamic ACO (default, full CMS-DACO)
 MOVEMENT_MODE_RANDOM = "random"      # Random movement baseline
-MOVEMENT_MODE_DISTANCE = "distance"  # Distance-greedy baseline
+MOVEMENT_MODE_DISTANCE = "distance"  # Distance-greedy baseline (BFS)
+MOVEMENT_MODE_ASTAR = "astar"        # Hazard-aware A* baseline (dynamic costs)
+MOVEMENT_MODE_STANDARD_ACO = "standard_aco"  # ACO without DACO enhancements
 MOVEMENT_MODE_DEFAULT = MOVEMENT_MODE_ACO
 
 # Pheromone control toggles
@@ -97,6 +99,10 @@ FIRE_EXIT_COMPROMISED_THRESHOLD = 0.08
 FIRE_LOW_THRESHOLD = 0.05            # Used for ants/pheromone avoidance
 NO_SPAWN_IN_FIRE = True              # Prevent initial agents from spawning inside fire
 AVOID_COMPROMISED_EXITS = True       # Skip exits that are flagged as compromised by fire
+
+# Ablation toggles (for systematic evaluation)
+BFS_SEED_ENABLED = True              # If False, disable BFS distance seeding (ablation)
+HAZARD_AWARE_ROUTING_ENABLED = True  # If False, agents ignore fire/smoke (ablation)
 
 # Pheromone
 PHEROMONE_FLOOR = 0.05

@@ -1,11 +1,13 @@
 import numpy as np
 import logging
+import heapq
 from collections import deque
 from typing import List, Tuple, Dict, Optional
 from .grid import Grid, EMPTY, WALL, EXIT
 from config import (
     ALPHA, BETA, GAMMA, SMOKE_SPEED_PENALTY, FAST_MODE_THRESHOLD,
     MOVEMENT_MODE_ACO, MOVEMENT_MODE_RANDOM, MOVEMENT_MODE_DISTANCE,
+    MOVEMENT_MODE_ASTAR, MOVEMENT_MODE_STANDARD_ACO,
     ENABLE_METRICS_TRACKING, CONGESTION_PENALTY_FACTOR,
     FIRE_SAFE_THRESHOLD, FIRE_DEATH_THRESHOLD, FIRE_LOW_THRESHOLD,
     SMOKE_PENALTY_THRESHOLD, AVOID_COMPROMISED_EXITS, FIRE_EXIT_COMPROMISED_THRESHOLD,
@@ -15,6 +17,7 @@ from config import (
     STUCK_ESCAPE_DISTANCE_WEIGHT, STUCK_ESCAPE_PHEROMONE_WEIGHT,
     STUCK_ESCAPE_HAZARD_WEIGHT, STUCK_ESCAPE_CONGESTION_WEIGHT,
     PHEROMONE_FLOOR, DUAL_PHEROMONE_ENABLED, DUAL_PHEROMONE_BLEND,
+    BFS_SEED_ENABLED, HAZARD_AWARE_ROUTING_ENABLED,
 )
 from config import EXPLORATION_EPS, EXPLORATION_DECAY, EXPLORATION_MIN
 from .pheromones import reinforce_success, suppress_path, evaporate_region
@@ -305,6 +308,90 @@ class AgentEngine:
             return int(self.rng.choice(lateral_indices))
 
         return scored[0][0]
+
+    def choose_move_astar(self, r: int, c: int, candidates: List[Tuple[int,int]]) -> int:
+        """Hazard-aware A* baseline: Dijkstra over grid costs including fire, smoke, congestion."""
+        targets = set(self._get_exit_targets() or self.exit_cells)
+        if not targets:
+            return int(self.rng.integers(len(candidates)))
+        # Cost map: base 1 + hazard penalties
+        def cell_cost(nr, nc):
+            if self.grid.types[nr,nc] == WALL:
+                return float('inf')
+            c = 1.0
+            # Hazard-aware: if disabled (ablation), cost is uniform
+            if HAZARD_AWARE_ROUTING_ENABLED:
+                f = float(self.grid.fire[nr,nc])
+                s = float(self.grid.smoke[nr,nc])
+                # Fire strongly penalized, smoke moderately
+                c += f * 15.0 + s * 4.0
+                # Congestion
+                occ = float(self._occupancy_grid[nr,nc]) if hasattr(self, '_occupancy_grid') else 0.0
+                c += occ * 2.5
+                # Compromised exit extra penalty
+                if self.grid.types[nr,nc] == EXIT and self.grid.exit_compromised[nr,nc]:
+                    c += 8.0
+            return c
+
+        # Use Dijkstra (A* with Manhattan heuristic) from current pos
+        # Since grid small (<=120), Dijkstra is fine; limit visited to ~R*C
+        import heapq as _hq
+        dist = {(r,c): 0.0}
+        prev = {}
+        pq = [(0.0 + min(manhattan((r,c), t) for t in targets), 0.0, (r,c))]
+        visited = set()
+        found_target = None
+        best_target_cost = float('inf')
+        # Early exit when reaching any target
+        while pq:
+            f, g, node = _hq.heappop(pq)
+            if node in visited:
+                continue
+            visited.add(node)
+            if node in targets:
+                if g < best_target_cost:
+                    best_target_cost = g
+                    found_target = node
+                    break
+            nr, nc = node
+            for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                ar, ac = nr+dr, nc+dc
+                if not (0 <= ar < self.grid.spec.rows and 0 <= ac < self.grid.spec.cols):
+                    continue
+                if self.grid.types[ar,ac] == WALL:
+                    continue
+                # Respect traversal threshold unless no alternative (allow if all blocked)
+                if HAZARD_AWARE_ROUTING_ENABLED and self.grid.fire[ar,ac] > FIRE_TRAVERSAL_THRESHOLD:
+                    # Still allow but with high cost; if all candidates fire-blocked, we already have fallback
+                    pass
+                ng = g + cell_cost(ar, ac)
+                if ng < dist.get((ar,ac), float('inf')):
+                    dist[(ar,ac)] = ng
+                    prev[(ar,ac)] = node
+                    h = min(manhattan((ar,ac), t) for t in targets)
+                    _hq.heappush(pq, (ng + h, ng, (ar,ac)))
+        # Reconstruct first step toward found_target
+        if found_target is None:
+            # No path found -> fall back to distance greedy
+            return self.choose_move_distance(-1, r, c, candidates)
+        # Walk back from target to start to find first step
+        cur = found_target
+        # If start is target (already at exit), stay?
+        if cur == (r,c):
+            # Choose among candidates the one closest to target
+            best = min(candidates, key=lambda cell: min(manhattan(cell, t) for t in targets))
+            return candidates.index(best)
+        while prev.get(cur) != (r,c) and prev.get(cur) is not None:
+            cur = prev[cur]
+            if cur == (r,c):
+                break
+        # cur is now the first step after start, or found_target if adjacent
+        # Find which candidate equals cur (or closest)
+        if cur in candidates:
+            return candidates.index(cur)
+        # If cur not in immediate candidates (due to cost model), pick closest candidate to cur
+        best = min(candidates, key=lambda cell: manhattan(cell, cur))
+        return candidates.index(best)
     
     def choose_move_aco(self, r: int, c: int, candidates: List[Tuple[int,int]], 
                         occupied: set, agent_id: int) -> int:
@@ -356,20 +443,24 @@ class AgentEngine:
                     base *= 0.35
                 else:
                     base *= 25.0   # Very strong exit attraction
-            # Smoke penalty scales with intensity, not binary (was 0.55 fixed)
-            smoke_val = float(self.grid.smoke[nr,nc])
-            if smoke_val > SMOKE_PENALTY_THRESHOLD:
-                # Scale 0.55 at threshold -> 0.30 at max smoke (previously fixed 0.55)
-                smoke_penalty = max(0.05, 1.0 - SMOKE_SPEED_PENALTY * (0.5 + 0.5 * min(1.0, (smoke_val - SMOKE_PENALTY_THRESHOLD) / 0.5)))
-            else:
+            # Hazard-aware routing ablation: if disabled, ignore smoke/fire
+            if not HAZARD_AWARE_ROUTING_ENABLED:
                 smoke_penalty = 1.0
-            fire_repulsion = 1.0 - min(0.7, self.grid.fire[nr, nc] * 2.8)
-            nearby_fire_penalty = 1.0
-            # Softened from 0.4 (0.025 for 4 neighbors) to 0.7 (0.24 for 4) — research: less annihilation
-            for fr, fc in self.grid.neighbors4(nr, nc):
-                if self.grid.fire[fr, fc] > 0.01:
-                    nearby_fire_penalty *= 0.7
-            base *= max(0.1, fire_repulsion * nearby_fire_penalty)
+                fire_repulsion = 1.0
+                nearby_fire_penalty = 1.0
+            else:
+                # Smoke penalty scales with intensity, not binary (was 0.55 fixed)
+                smoke_val = float(self.grid.smoke[nr,nc])
+                if smoke_val > SMOKE_PENALTY_THRESHOLD:
+                    smoke_penalty = max(0.05, 1.0 - SMOKE_SPEED_PENALTY * (0.5 + 0.5 * min(1.0, (smoke_val - SMOKE_PENALTY_THRESHOLD) / 0.5)))
+                else:
+                    smoke_penalty = 1.0
+                fire_repulsion = 1.0 - min(0.7, self.grid.fire[nr, nc] * 2.8)
+                nearby_fire_penalty = 1.0
+                for fr, fc in self.grid.neighbors4(nr, nc):
+                    if self.grid.fire[fr, fc] > 0.01:
+                        nearby_fire_penalty *= 0.7
+                base *= max(0.1, fire_repulsion * nearby_fire_penalty)
             if self.prev_pos.get(agent_id) == (nr,nc): base *= 0.2
 
             # Count nearby congestion using occupancy grid (O(1) numpy slice)
@@ -609,7 +700,9 @@ class AgentEngine:
                 choice = self.choose_move_random(candidate_pool)
             elif self.movement_mode == MOVEMENT_MODE_DISTANCE:
                 choice = self.choose_move_distance(agent_id, r, c, candidate_pool)
-            else:
+            elif self.movement_mode == MOVEMENT_MODE_ASTAR:
+                choice = self.choose_move_astar(r, c, candidate_pool)
+            else:  # ACO and STANDARD_ACO share ACO chooser (flags differentiate via config)
                 current_dist = self._distance_to_goal((r, c))
                 last_known_dist = self.last_dist.get(agent_id)
                 # FIX: >= counted lateral detours as stuck (valid maze detour). Only > is truly stuck.

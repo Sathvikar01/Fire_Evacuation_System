@@ -49,10 +49,12 @@ class Grid:
         self.fire_params = self._normalize_fire_params(fire_params)
 
         self._randomize_layout()
-        # seed pheromone from distance map (fast backbone)
+        # seed pheromone from distance map (fast backbone) — ablation toggle
         try:
-            from .seed import seed_pheromone_from_dist
-            seed_pheromone_from_dist(self)
+            from config import BFS_SEED_ENABLED
+            if BFS_SEED_ENABLED:
+                from .seed import seed_pheromone_from_dist
+                seed_pheromone_from_dist(self)
         except Exception:
             pass
 

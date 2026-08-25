@@ -73,10 +73,12 @@ class Simulation:
         self._exit_fire_blocked_prev = np.zeros_like(self.grid.exit_compromised, dtype=bool)
         
         # Movement and pheromone control
+        from config import MOVEMENT_MODE_ASTAR, MOVEMENT_MODE_STANDARD_ACO
         self.movement_mode = movement_mode if movement_mode else MOVEMENT_MODE_DEFAULT
         self.enable_ant_precompute = ENABLE_ANT_PRECOMPUTE
         self.enable_agent_deposits = ENABLE_AGENT_DEPOSITS
-        if self.movement_mode != MOVEMENT_MODE_ACO:
+        # Only ACO variants use pheromone; distance/random/astar are non-pheromone baselines
+        if self.movement_mode not in (MOVEMENT_MODE_ACO, MOVEMENT_MODE_STANDARD_ACO):
             self.enable_ant_precompute = False
             self.enable_agent_deposits = False
         
@@ -145,8 +147,9 @@ class Simulation:
         self.store_initial_state()
 
     def _use_pheromone(self) -> bool:
-        """Check if pheromone operations should be active (ACO mode only)"""
-        return self.movement_mode == MOVEMENT_MODE_ACO and (self.enable_ant_precompute or self.enable_agent_deposits)
+        """Check if pheromone operations should be active (ACO variants only)"""
+        from config import MOVEMENT_MODE_STANDARD_ACO
+        return self.movement_mode in (MOVEMENT_MODE_ACO, MOVEMENT_MODE_STANDARD_ACO) and (self.enable_ant_precompute or self.enable_agent_deposits)
 
     def store_initial_state(self):
         if hasattr(self.grid, "store_initial_state"):
