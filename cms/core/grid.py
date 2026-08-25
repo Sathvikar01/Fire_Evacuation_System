@@ -31,9 +31,16 @@ class Grid:
         R, C = spec.rows, spec.cols
         self.types = np.zeros((R, C), dtype=np.int8)
         self.pheromone = np.full((R, C), PHEROMONE_FLOOR, dtype=np.float32)
+        # R5: Dual-channel pheromone. 'pheromone' is the speed channel (short
+        # paths). 'pheromone_safety' is the safety channel (low fire exposure).
+        # Agents blend both based on DUAL_PHEROMONE_BLEND.
+        self.pheromone_safety = np.full((R, C), PHEROMONE_FLOOR, dtype=np.float32)
         self.fire = np.zeros((R, C), dtype=np.float32)
         self.smoke = np.zeros((R, C), dtype=np.float32)
         self.congestion = np.zeros((R, C), dtype=np.float32)
+        # R6: Predictive congestion pheromone (negative pheromone). Higher
+        # values mean "avoid this cell" (predicted congestion).
+        self.congestion_pheromone = np.zeros((R, C), dtype=np.float32)
         self.exit_compromised = np.zeros((R, C), dtype=bool)
         self.agents: List[Tuple[int,int]] = []
         self.agent_ids: List[int] = []  # Persistent unique IDs for each agent
@@ -83,7 +90,9 @@ class Grid:
         self._initial_fire = self.fire.copy()
         self._initial_smoke = self.smoke.copy()
         self._initial_pheromone = self.pheromone.copy()
+        self._initial_pheromone_safety = self.pheromone_safety.copy()
         self._initial_congestion = self.congestion.copy()
+        self._initial_congestion_pheromone = self.congestion_pheromone.copy()
         self._initial_agents = list(self.agents)
         self._initial_agent_ids = list(self.agent_ids)
         self._initial_next_agent_id = self.next_agent_id
@@ -97,7 +106,9 @@ class Grid:
         self.fire[:, :] = self._initial_fire
         self.smoke[:, :] = self._initial_smoke
         self.pheromone[:, :] = self._initial_pheromone
+        self.pheromone_safety[:, :] = self._initial_pheromone_safety
         self.congestion[:, :] = self._initial_congestion
+        self.congestion_pheromone[:, :] = self._initial_congestion_pheromone
         self.agents = list(self._initial_agents)
         self.agent_ids = list(self._initial_agent_ids)
         self.next_agent_id = self._initial_next_agent_id
@@ -135,8 +146,13 @@ class Grid:
             self.types.flat[positions] = WALL
 
         # 2) place exits (border preferentially), spaced apart
-        border = [(0,c) for c in range(C)] + [(R-1,c) for c in range(C)]
-        border += [(r,0) for r in range(R)] + [(r,C-1) for r in range(R)]
+        # Use ordered set to avoid duplicate corners (each corner appeared twice before → 2x bias)
+        seen = set()
+        border = []
+        for coord in [(0,c) for c in range(C)] + [(R-1,c) for c in range(C)] + [(r,0) for r in range(R)] + [(r,C-1) for r in range(R)]:
+            if coord not in seen:
+                seen.add(coord)
+                border.append(coord)
         self.rng.shuffle(border)
         placed_exits = []
 
@@ -164,7 +180,7 @@ class Grid:
         # 3) connectivity check and repair if too many unreachable
         reachable = self._bfs_from_exits()
         unreachable = np.argwhere(~reachable & (self.types != WALL))
-        empties_count = np.sum(self.types != WALL)
+        empties_count = int(np.sum(self.types != WALL))
         if empties_count > 0 and len(unreachable) / float(empties_count) > 0.05:
             attempts = 0
             while attempts < 800 and np.any(~reachable & (self.types != WALL)):
@@ -181,8 +197,10 @@ class Grid:
                     rr, cc = candidates[self.rng.integers(len(candidates))]
                     self.types[rr, cc] = EMPTY
                 reachable = self._bfs_from_exits()
+                # Recompute denominator — previously stale, could exit too early / loop 800 BFS
+                empties_count = int(np.sum(self.types != WALL))
                 unreachable = np.argwhere(~reachable & (self.types != WALL))
-                if len(unreachable) / float(empties_count) <= 0.05:
+                if empties_count > 0 and len(unreachable) / float(empties_count) <= 0.05:
                     break
 
         # 4) seed initial fire band before placing agents
@@ -212,11 +230,30 @@ class Grid:
             cnt += 1
             if cnt >= self.spec.crowd:
                 break
+        # Research reproducibility: silently truncated crowd hides unsolvable configs.
+        # Keep spec.crowd as requested for reporting but store actual count and warn once.
+        self._actual_crowd = cnt
+        if cnt < self.spec.crowd:
+            import warnings as _warnings
+            _warnings.warn(
+                f"Grid: requested crowd={self.spec.crowd} but only {cnt} reachable cells available "
+                f"(empties={len(empties)}, exits={len(placed_exits)}). Truncating.",
+                RuntimeWarning, stacklevel=2
+            )
+        # Also warn if we could not place requested exits (wall block or spacing)
+        if len(placed_exits) < self.spec.exits:
+            import warnings as _warnings2
+            _warnings2.warn(
+                f"Grid: requested exits={self.spec.exits} but only {len(placed_exits)} placed "
+                f"(wall_density={self.spec.wall_density}).",
+                RuntimeWarning, stacklevel=2
+            )
 
     def clear_dynamic(self):
         self.fire.fill(0.0)
         self.smoke.fill(0.0)
         self.congestion.fill(0.0)
+        self.congestion_pheromone.fill(0.0)
 
     def seed_initial_fire(self):
         """Create an initial fire band on one side of the map."""
@@ -280,3 +317,5 @@ class Grid:
 
     def reset_pheromone(self):
         self.pheromone.fill(PHEROMONE_FLOOR)
+        self.pheromone_safety.fill(PHEROMONE_FLOOR)
+        self.congestion_pheromone.fill(0.0)
