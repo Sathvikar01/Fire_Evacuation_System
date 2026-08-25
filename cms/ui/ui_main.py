@@ -45,9 +45,9 @@ class UIMain(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
         root.addWidget(self.tabs)
 
-        # wiring
-        self.controls.startClicked.connect(self.sim.start)
-        self.controls.pauseClicked.connect(self.sim.pause)
+        # wiring — guard signals with lambda to drop bool arg from clicked[bool]
+        self.controls.startClicked.connect(lambda: self.sim.start())
+        self.controls.pauseClicked.connect(lambda: self.sim.pause())
         self.controls.resetClicked.connect(self._reset_keep_layout)
         self.controls.regenClicked.connect(self._regen)
         self.controls.toolChanged.connect(self.grid.setTool)
@@ -57,7 +57,33 @@ class UIMain(QWidget):
         self.controls.compareRequested.connect(self._show_comparison_dialog)
         self.controls.sessionResetRequested.connect(self._reset_session_stats)
 
-        self.sim.timer.timeout.connect(self._on_tick)
+        # Timer: headless-safe + async support
+        self._tick_counter = 0
+        self._last_graph_tick = 0
+        self._use_async = False
+        # Try async worker first (offloads simulation to background thread)
+        try:
+            worker, thread = self.sim.create_worker_thread(parent=self)
+            if worker is not None and thread is not None:
+                worker.tickReady.connect(lambda snap: self._on_tick_async(snap))
+                worker.precomputeProgress.connect(lambda p: self.grid.update())
+                thread.start()
+                self._use_async = True
+                self._worker = worker
+                self._worker_thread = thread
+        except Exception:
+            self._use_async = False
+        if not self._use_async:
+            # Fallback to timer-driven stepping on UI thread
+            try:
+                self.sim._ensure_timer()
+            except Exception:
+                pass
+            if getattr(self.sim, 'timer', None) is not None:
+                try:
+                    self.sim.timer.timeout.connect(self._on_tick)
+                except Exception:
+                    pass
 
     def _auto_spread(self, on):
         self.sim.enable_auto_spread = on
@@ -135,9 +161,62 @@ class UIMain(QWidget):
         self.sim.reset_session_statistics()
         self._update_title()
 
-    def _on_tick(self):
-        self._update_title()
+    def _on_tick_async(self, snap=None):
+        # Called from worker thread via signal — runs on UI thread
+        self._tick_counter += 1
+        self._update_title_throttled()
         self.grid.update()
+
+    def _on_tick(self):
+        self._tick_counter += 1
+        self._update_title_throttled()
+        self.grid.update()
+
+    def _update_title_throttled(self):
+        # Throttle heavy graph/session updates to ~2 Hz (every 30 ticks at 60ms)
+        # Previously graphs redrawn every 60ms → UI blocking
+        self._update_title()
+        if self._tick_counter - self._last_graph_tick >= 30 or self._tick_counter < 3:
+            self._last_graph_tick = self._tick_counter
+            self._refresh_graphs()
+
+    def _refresh_graphs(self):
+        try:
+            exit_mask = getattr(self.sim.grid, "exit_compromised", None)
+            compromised = int(exit_mask.sum()) if exit_mask is not None else 0
+            total_exits = int((self.sim.grid.types == EXIT).sum())
+            self.controls.update_exit_status(compromised, total_exits)
+            session_rows = self.sim.session_tracker.summary_rows()
+            winner = self.sim.session_tracker.winner()
+            suppression = self.sim.session_tracker.distance_suppression()
+            scoreboard = self.sim.session_tracker.multi_metric_scores()
+            history_payload = self.sim.session_tracker.history_payload()
+            self.graph.updateComparison(session_rows, winner, suppression, scoreboard, history_payload)
+        except Exception as e:
+            # Don't crash tick on graph error
+            import traceback
+            print(f"[UI] graph refresh error: {e}")
+
+    def closeEvent(self, event):
+        try:
+            self.sim.pause()
+            if hasattr(self.sim, 'destroy_worker_thread'):
+                self.sim.destroy_worker_thread()
+            if getattr(self.sim, 'timer', None) is not None:
+                try:
+                    self.sim.timer.stop()
+                    self.sim.timer.timeout.disconnect(self._on_tick)
+                except Exception:
+                    pass
+            # Cleanup matplotlib figures
+            try:
+                import matplotlib.pyplot as plt
+                plt.close('all')
+            except Exception:
+                pass
+        except Exception:
+            pass
+        super().closeEvent(event)
 
     def _update_title(self):
         evac = self.sim.engine.evacuated
@@ -180,7 +259,7 @@ class UIMain(QWidget):
             congestion=congestion_peak,
         )
         
-        # Update graph title
+        # Update graph title (lightweight)
         self.graph.setText(f"<b>Performance Metrics [{mode_str}] — Tick {self.sim.tick_counter}</b>")
         tick_label = f"Tick: {self.sim.tick_counter}"
         rho_label = f" | ρ: {dynamic_rho:.4f}" if dynamic_rho is not None else ""
@@ -188,15 +267,3 @@ class UIMain(QWidget):
         self.setWindowTitle(
             f"CMS-DACO [{mode_str}] | Evacuated: {evac} | Casualties: {dead} | Remaining: {remain} | {tick_label}{rho_label}{runtime_label}"
         )
-
-        exit_mask = getattr(self.sim.grid, "exit_compromised", None)
-        compromised = int(exit_mask.sum()) if exit_mask is not None else 0
-        total_exits = int((self.sim.grid.types == EXIT).sum())
-        self.controls.update_exit_status(compromised, total_exits)
-
-        session_rows = self.sim.session_tracker.summary_rows()
-        winner = self.sim.session_tracker.winner()
-        suppression = self.sim.session_tracker.distance_suppression()
-        scoreboard = self.sim.session_tracker.multi_metric_scores()
-        history_payload = self.sim.session_tracker.history_payload()
-        self.graph.updateComparison(session_rows, winner, suppression, scoreboard, history_payload)

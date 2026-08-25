@@ -11,7 +11,7 @@ from config import (
 )
 
 def main():
-    app = QApplication(sys.argv)
+    app = QApplication.instance() or QApplication(sys.argv)
 
     spec = GridSpec(
         rows=GRID_DEFAULT,
@@ -39,7 +39,15 @@ def main():
     ui.resize(1220, 780)
     ui.show()
 
-    sys.exit(app.exec_())
+    # Use exec() not deprecated exec_()
+    try:
+        exec_fn = getattr(app, "exec", None) or getattr(app, "exec_", None)
+        sys.exit(exec_fn())
+    finally:
+        try:
+            sim.destroy_worker_thread()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
