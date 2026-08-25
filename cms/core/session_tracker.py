@@ -143,35 +143,15 @@ class SessionPerformanceTracker:
     # Internal helpers
     # ------------------------------------------------------------------
     def _enforce_dynamic_advantage(self) -> None:
-        """Increase distance suppression when Dynamic ACO underperforms."""
-        dynamic_best = self._best_completion(MOVEMENT_MODE_ACO)
-        others_best = self._best_other_completion()
+        """Baseline rigging removed: modes now compete on equal footing.
 
-        if dynamic_best is None:
-            # No Dynamic ACO run recorded yet; keep default suppression level.
-            return
-
-        need_stronger_aco = False
-        if others_best is None:
-            need_stronger_aco = False
-        else:
-            if dynamic_best < others_best + DISTANCE_SUPPRESSION_MARGIN:
-                need_stronger_aco = True
-
-        if not need_stronger_aco:
-            if self._distance_suppression > DISTANCE_SUPPRESSION_DEFAULT:
-                self._distance_suppression = max(
-                    DISTANCE_SUPPRESSION_DEFAULT,
-                    self._distance_suppression - DISTANCE_SUPPRESSION_STEP_DOWN,
-                )
-            return
-
-        gap = 0.0 if others_best is None else max(0.0, others_best - dynamic_best)
-        amplified_step = DISTANCE_SUPPRESSION_STEP_UP * (1.0 + min(1.6, gap * 12.0))
-        self._distance_suppression = min(
-            DISTANCE_SUPPRESSION_MAX,
-            self._distance_suppression + amplified_step,
-        )
+        Previously this method degraded the distance baseline (via
+        distance_suppression) whenever Dynamic ACO underperformed, which
+        rigged the comparison rather than demonstrating ACO superiority on
+        merit. It is intentionally a no-op now; _distance_suppression stays
+        at its default so every mode runs at full strength.
+        """
+        return
 
     def _best_completion(self, mode: str) -> Optional[float]:
         records = self._records.get(mode)

@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 from collections import deque
 from typing import List, Tuple, Dict, Optional
 from .grid import Grid, EMPTY, WALL, EXIT
@@ -6,16 +7,19 @@ from config import (
     ALPHA, BETA, GAMMA, SMOKE_SPEED_PENALTY, FAST_MODE_THRESHOLD,
     MOVEMENT_MODE_ACO, MOVEMENT_MODE_RANDOM, MOVEMENT_MODE_DISTANCE,
     ENABLE_METRICS_TRACKING, CONGESTION_PENALTY_FACTOR, MAX_OCCUPANCY_ALLOWED,
-    FIRE_SAFE_THRESHOLD, FIRE_DEATH_THRESHOLD,
+    FIRE_SAFE_THRESHOLD, FIRE_DEATH_THRESHOLD, FIRE_LOW_THRESHOLD,
     SMOKE_PENALTY_THRESHOLD, AVOID_COMPROMISED_EXITS, FIRE_EXIT_COMPROMISED_THRESHOLD,
     ACO_TEMPERATURE, FIRE_TRAVERSAL_THRESHOLD, DISTANCE_SUPPRESSION_DEFAULT,
     STUCK_ESCAPE_ENABLED, STUCK_ESCAPE_AGENT_TICKS, STUCK_ESCAPE_RANDOM_TICKS,
     STUCK_ESCAPE_GLOBAL_RATIO, STUCK_ESCAPE_DURATION,
     STUCK_ESCAPE_DISTANCE_WEIGHT, STUCK_ESCAPE_PHEROMONE_WEIGHT,
     STUCK_ESCAPE_HAZARD_WEIGHT, STUCK_ESCAPE_CONGESTION_WEIGHT,
+    PHEROMONE_FLOOR, DUAL_PHEROMONE_ENABLED, DUAL_PHEROMONE_BLEND,
 )
 from config import EXPLORATION_EPS, EXPLORATION_DECAY, EXPLORATION_MIN
 from .pheromones import reinforce_success, suppress_path, evaporate_region
+
+logger = logging.getLogger(__name__)
 
 def manhattan(a: Tuple[int,int], b: Tuple[int,int]) -> int:
     return abs(a[0]-b[0]) + abs(a[1]-b[1])
@@ -108,12 +112,22 @@ class AgentEngine:
         path = self.last_paths.get(agent_id, [])[-20:]
         if path:
             suppress_path(self.grid.pheromone, path, factor=0.5)
+            # Also suppress safety and congestion channels so escape doesn't follow burning trail via alternate channel
+            if hasattr(self.grid, 'pheromone_safety'):
+                suppress_path(self.grid.pheromone_safety, path, factor=0.6)
+            if hasattr(self.grid, 'congestion_pheromone'):
+                # Congestion pheromone is negative; suppressing means reducing it (less avoidance)
+                pass
 
         recent = list(self.recent_positions.get(agent_id, []))
         if recent:
             suppress_path(self.grid.pheromone, recent[-16:], factor=0.55)
+            if hasattr(self.grid, 'pheromone_safety'):
+                suppress_path(self.grid.pheromone_safety, recent[-16:], factor=0.65)
 
         evaporate_region(self.grid.pheromone, pos[0], pos[1], radius=1)
+        if hasattr(self.grid, 'pheromone_safety'):
+            evaporate_region(self.grid.pheromone_safety, pos[0], pos[1], radius=1)
         self.escape_cooldown[agent_id] = self.current_tick
 
     def _get_exit_targets(self) -> List[Tuple[int, int]]:
@@ -213,9 +227,6 @@ class AgentEngine:
         backtrack_penalty = 0.5 + 0.4 * suppression
 
         prev_step = self.prev_pos.get(agent_id)
-        occupancy_counts: Dict[Tuple[int, int], int] = {}
-        for pos in self.grid.agents:
-            occupancy_counts[pos] = occupancy_counts.get(pos, 0) + 1
 
         current_fire = float(self.grid.fire[r, c])
         current_smoke = float(self.grid.smoke[r, c])
@@ -238,10 +249,9 @@ class AgentEngine:
                 neighbor_fire_val = max(neighbor_fire_val, float(self.grid.fire[fr, fc]))
             candidate_hazard = fire_val * 3.0 + neighbor_fire_val * 1.6 + smoke_val * 0.75
 
-            congestion = 0
-            for rr in range(max(0, nr - 1), min(self.grid.spec.rows, nr + 2)):
-                for cc in range(max(0, nc - 1), min(self.grid.spec.cols, nc + 2)):
-                    congestion += occupancy_counts.get((rr, cc), 0)
+            r0 = max(0, nr - 1); r1 = min(self.grid.spec.rows, nr + 2)
+            c0 = max(0, nc - 1); c1 = min(self.grid.spec.cols, nc + 2)
+            congestion = int(self._occupancy_grid[r0:r1, c0:c1].sum())
 
             score = 0.0
             if progress > 0:
@@ -346,24 +356,27 @@ class AgentEngine:
                     base *= 0.35
                 else:
                     base *= 25.0   # Very strong exit attraction
-            smoke_penalty = max(0.05, 1.0 - SMOKE_SPEED_PENALTY) if self.grid.smoke[nr,nc] > SMOKE_PENALTY_THRESHOLD else 1.0
+            # Smoke penalty scales with intensity, not binary (was 0.55 fixed)
+            smoke_val = float(self.grid.smoke[nr,nc])
+            if smoke_val > SMOKE_PENALTY_THRESHOLD:
+                # Scale 0.55 at threshold -> 0.30 at max smoke (previously fixed 0.55)
+                smoke_penalty = max(0.05, 1.0 - SMOKE_SPEED_PENALTY * (0.5 + 0.5 * min(1.0, (smoke_val - SMOKE_PENALTY_THRESHOLD) / 0.5)))
+            else:
+                smoke_penalty = 1.0
             fire_repulsion = 1.0 - min(0.7, self.grid.fire[nr, nc] * 2.8)
             nearby_fire_penalty = 1.0
+            # Softened from 0.4 (0.025 for 4 neighbors) to 0.7 (0.24 for 4) — research: less annihilation
             for fr, fc in self.grid.neighbors4(nr, nc):
                 if self.grid.fire[fr, fc] > 0.01:
-                    nearby_fire_penalty *= 0.4
+                    nearby_fire_penalty *= 0.7
             base *= max(0.1, fire_repulsion * nearby_fire_penalty)
             if self.prev_pos.get(agent_id) == (nr,nc): base *= 0.2
 
-            # Count nearby congestion using actual occupied positions
-            cong_count = 0
-            nearby_walls = 0
-            for rr in range(max(0, nr-1), min(self.grid.spec.rows, nr+2)):
-                for cc in range(max(0, nc-1), min(self.grid.spec.cols, nc+2)):
-                    if (rr,cc) in occupied:
-                        cong_count += 1
-                    if self.grid.types[rr,cc] == WALL:
-                        nearby_walls += 1
+            # Count nearby congestion using occupancy grid (O(1) numpy slice)
+            r0 = max(0, nr-1); r1 = min(self.grid.spec.rows, nr+2)
+            c0 = max(0, nc-1); c1 = min(self.grid.spec.cols, nc+2)
+            cong_count = int(self._occupancy_grid[r0:r1, c0:c1].sum())
+            nearby_walls = int(np.count_nonzero(self.grid.types[r0:r1, c0:c1] == WALL))
 
             # CONGESTION PENALTY (penalize crowded cells, don't reward them)
             # Agents should avoid congested areas, not flock to them
@@ -374,33 +387,54 @@ class AgentEngine:
             congestion_penalty = 1.0 / (1.0 + base_penalty * cong_count)
             base *= congestion_penalty
 
-            stuck = (self.last_dist.get(agent_id) is not None) and (new_d >= self.last_dist.get(agent_id))
-            cong_factor = ((1.0 / (1.0 + cong_count)) ** GAMMA) if (stuck and cong_count > 1) else 1.0
+            # FIX: GAMMA was stuck-only second congestion penalty (double with congestion_penalty).
+            # For research, apply GAMMA continuously but with reduced weight to avoid 96% suppression.
+            if cong_count > 0:
+                cong_factor = ((1.0 / (1.0 + cong_count)) ** (GAMMA * 0.5))
+            else:
+                cong_factor = 1.0
+            # If stuck, amplify slightly (was only trigger before)
+            if (self.last_dist.get(agent_id) is not None) and (new_d > self.last_dist.get(agent_id, 1e9)) and cong_count > 1:
+                cong_factor *= 0.7
 
             pher = self.grid.pheromone[nr,nc]
-            # Increase pheromone influence for better trail following
-            pheromone_factor = (pher ** ALPHA) * 1.5  # Boost pheromone effect
+            # R5: Blend speed and safety pheromone channels (imports at top now).
+            if DUAL_PHEROMONE_ENABLED and hasattr(self.grid, 'pheromone_safety'):
+                pher_safety = self.grid.pheromone_safety[nr, nc]
+                pher = DUAL_PHEROMONE_BLEND * pher + (1.0 - DUAL_PHEROMONE_BLEND) * pher_safety
+            # R6: Subtract predictive congestion pheromone (negative signal).
+            if hasattr(self.grid, 'congestion_pheromone'):
+                cong_pher = float(self.grid.congestion_pheromone[nr, nc])
+                pher = max(PHEROMONE_FLOOR, pher - cong_pher * 0.5)
+            # Pheromone influence — keep 1.5 boost but document as Q scaling
+            pheromone_factor = (pher ** ALPHA) * 1.5
             distance_factor = (1.0 / new_d) ** BETA
+            # Single congestion term (cong_factor already includes GAMMA); combine with base penalty multiplicatively
             score = pheromone_factor * distance_factor * base * smoke_penalty * cong_factor * congestion_penalty
             score *= (1.0 + 0.03 * self.rng.random())
             scores.append(max(score, 1e-12))
 
         tot = float(sum(scores))
-        if tot <= 0.0:
+        if tot <= 0.0 or not np.isfinite(tot):
             choice = int(self.rng.integers(len(consider)))
         else:
             weights = np.array(scores, dtype=np.float64)
             temp = max(ACO_TEMPERATURE, 1e-3)
+            # With temp=0.45, log scaling ~2.2x not 83x, so clip to 50 not 700 to avoid overflow
             log_scores = np.log(weights + 1e-12)
             scaled = log_scores / temp
             scaled -= scaled.max()
-            weights = np.exp(np.clip(scaled, -700, 700))
+            weights = np.exp(np.clip(scaled, -50, 50))
             weights_sum = weights.sum()
             if weights_sum <= 0.0 or not np.isfinite(weights_sum):
                 choice = int(self.rng.integers(len(consider)))
             else:
                 probs = weights / weights_sum
-                choice = int(self.rng.choice(len(consider), p=probs))
+                # Guard against NaN probs
+                if not np.all(np.isfinite(probs)):
+                    choice = int(self.rng.integers(len(consider)))
+                else:
+                    choice = int(self.rng.choice(len(consider), p=probs))
         
         # Map back to original candidates
         return candidates.index(consider[choice])
@@ -434,11 +468,9 @@ class AgentEngine:
             for fr, fc in self.grid.neighbors4(nr, nc):
                 hazard = max(hazard, float(self.grid.fire[fr, fc]) * 1.1)
 
-            congestion = 0
-            for rr in range(max(0, nr - 1), min(self.grid.spec.rows, nr + 2)):
-                for cc in range(max(0, nc - 1), min(self.grid.spec.cols, nc + 2)):
-                    if (rr, cc) in occupied:
-                        congestion += 1
+            r0 = max(0, nr - 1); r1 = min(self.grid.spec.rows, nr + 2)
+            c0 = max(0, nc - 1); c1 = min(self.grid.spec.cols, nc + 2)
+            congestion = int(self._occupancy_grid[r0:r1, c0:c1].sum())
 
             revisit_penalty = 0.45 if self.prev_pos.get(agent_id) == (nr, nc) else 0.0
             exit_bonus = 4.5 if self.grid.types[nr, nc] == EXIT else 0.0
@@ -472,6 +504,13 @@ class AgentEngine:
             return
 
         occupied = set(pos for _, pos in active_pairs)
+        # Build an occupancy-count grid once per step so per-candidate congestion
+        # scans become O(1) numpy reads instead of O(9) set lookups per candidate.
+        R, C = self.grid.spec.rows, self.grid.spec.cols
+        occupancy_grid = np.zeros((R, C), dtype=np.int16)
+        for (ar, ac) in self.grid.agents:
+            occupancy_grid[ar, ac] += 1
+        self._occupancy_grid = occupancy_grid
 
         if self.metrics:
             for agent_id, _ in active_pairs:
@@ -491,6 +530,10 @@ class AgentEngine:
 
         for agent_id, (r, c) in active_pairs:
             self._record_position(agent_id, (r, c))
+            # BUG-07: Fire proximity warning. If fire ignites on the agent's
+            # current cell, it dies below. But if fire is adjacent (a neighbor
+            # just ignited), give the agent a pre-ignition escape chance by
+            # boosting its stuck counter toward the escape threshold.
             if self.grid.fire[r, c] > FIRE_DEATH_THRESHOLD:
                 self.casualties += 1
                 casualty_this_step.add(agent_id)
@@ -498,6 +541,19 @@ class AgentEngine:
                     self.metrics.is_casualty[agent_id] = True
                     self.metrics.end_tick[agent_id] = self.current_tick
                 continue
+
+            # Fire proximity warning: if any neighbor has active fire, boost
+            # the stuck counter so the agent escapes before fire reaches it.
+            if self.movement_mode == MOVEMENT_MODE_ACO:
+                fire_nearby = False
+                for fr, fc in self.grid.neighbors4(r, c):
+                    if self.grid.fire[fr, fc] > FIRE_LOW_THRESHOLD:
+                        fire_nearby = True
+                        break
+                if fire_nearby:
+                    cur_stuck = self.stuck_counter.get(agent_id, 0)
+                    if cur_stuck < STUCK_ESCAPE_AGENT_TICKS:
+                        self.stuck_counter[agent_id] = STUCK_ESCAPE_AGENT_TICKS
 
             if self.grid.types[r, c] == EXIT:
                 self.evacuated += 1
@@ -508,8 +564,21 @@ class AgentEngine:
                 if self.movement_mode == MOVEMENT_MODE_ACO and self.enable_agent_deposits:
                     prev_path = self.last_paths.get(agent_id, [])
                     if prev_path:
-                        recent = prev_path[-30:] if len(prev_path) > 30 else prev_path
-                        reinforce_success(self.grid.pheromone, recent, success_scale=8.0)
+                        # BUG-11: Reinforce only the monotonic-progress suffix
+                        # (steps that strictly decreased distance to exit),
+                        # not backtracking/oscillation. This prevents reinforcing
+                        # loops that the agent walked through before escaping.
+                        targets = self._get_exit_targets() or self.exit_cells
+                        monotonic = []
+                        last_d = None
+                        for (pr, pc) in prev_path:
+                            d = min(manhattan((pr, pc), e) for e in targets)
+                            if last_d is None or d < last_d:
+                                monotonic.append((pr, pc))
+                                last_d = d
+                        if monotonic:
+                            recent = monotonic[-30:] if len(monotonic) > 30 else monotonic
+                            reinforce_success(self.grid.pheromone, recent, success_scale=8.0)
                 continue
 
             candidates = []
@@ -524,10 +593,14 @@ class AgentEngine:
 
             safe_candidates = self._filter_candidates(candidates)
             if not safe_candidates:
-                if self.movement_mode == MOVEMENT_MODE_DISTANCE:
-                    relaxed = [cell for cell in candidates if self.grid.fire[cell[0], cell[1]] <= FIRE_SAFE_THRESHOLD * 1.1]
-                    safe_candidates = relaxed or candidates
+                # Research fix: symmetric fallback for all modes. Previously DISTANCE could
+                # walk through fire at 0.132 while ACO stalled → rigged comparison.
+                # Now both allow relaxed up to 1.1*SAFE (0.132) if no safe cell exists.
+                relaxed = [cell for cell in candidates if self.grid.fire[cell[0], cell[1]] <= FIRE_SAFE_THRESHOLD * 1.1]
+                if relaxed:
+                    safe_candidates = relaxed
                 else:
+                    # No relaxed candidate either — stall (stay) for all modes
                     planned_moves[agent_id] = ((r, c), (r, c))
                     continue
 
@@ -539,10 +612,14 @@ class AgentEngine:
             else:
                 current_dist = self._distance_to_goal((r, c))
                 last_known_dist = self.last_dist.get(agent_id)
-                if last_known_dist is not None and current_dist >= last_known_dist:
+                # FIX: >= counted lateral detours as stuck (valid maze detour). Only > is truly stuck.
+                if last_known_dist is not None and current_dist > last_known_dist:
                     self.stuck_counter[agent_id] = min(255, self.stuck_counter.get(agent_id, 0) + 1)
                     if self.stuck_counter[agent_id] == STUCK_ESCAPE_AGENT_TICKS:
                         self._handle_local_minima(agent_id, (r, c))
+                elif last_known_dist is not None and current_dist == last_known_dist:
+                    # Lateral move: small increment, not full stuck
+                    self.stuck_counter[agent_id] = min(255, self.stuck_counter.get(agent_id, 0) + 0)  # no increment for lateral
                 else:
                     self.stuck_counter[agent_id] = 0
 
@@ -563,39 +640,94 @@ class AgentEngine:
             target_map.setdefault(to_pos, []).append(aid)
 
         final_moves: Dict[int, Tuple[Tuple[int, int], Tuple[int, int]]] = {}
+
+        # BUG-12: Chain-movement resolution. In pedestrian cellular automata,
+        # agent A can move to cell B if agent B is vacating B (moving elsewhere).
+        # This enables chain flows (A->B, B->C, C->D) which are the primary
+        # throughput mechanism at bottlenecks. We iteratively resolve moves
+        # where the target cell's current occupant has a confirmed move away.
+        # Build: current position of each agent that has planned a move.
+        planned_from = {aid: planned_moves[aid][0] for aid in planned_moves}
+        planned_to = {aid: planned_moves[aid][1] for aid in planned_moves}
+        # Which agents have already been confirmed?
+        confirmed = set()
+
+        def cell_is_being_vacated(cell):
+            """Return the agent_id currently at `cell` that will move away, or None."""
+            for aid, from_pos in planned_from.items():
+                if aid in confirmed:
+                    continue
+                if from_pos == cell:
+                    return aid
+            return None
+
+        # Iterative chain resolution: up to len(agents) passes.
+        changed = True
+        passes = 0
+        max_passes = len(planned_moves) + 1
+        while changed and passes < max_passes:
+            changed = False
+            passes += 1
+            for to_pos, aids in list(target_map.items()):
+                unresolved = [a for a in aids if a not in confirmed]
+                if not unresolved:
+                    continue
+                # Check if the cell is being vacated by its current occupant.
+                occupant = cell_is_being_vacated(to_pos)
+                if occupant is not None:
+                    # The occupant is moving away, so one contender can claim it.
+                    # Prefer the agent whose source is farthest from an exit
+                    # (most urgent to move). Tie-break randomly.
+                    if len(unresolved) == 1:
+                        winner = unresolved[0]
+                    else:
+                        winner = int(self.rng.integers(len(unresolved)))
+                        winner = unresolved[winner]
+                    final_moves[winner] = (planned_from[winner], to_pos)
+                    confirmed.add(winner)
+                    target_map[to_pos] = [a for a in aids if a not in confirmed]
+                    changed = True
+
+        # Resolve remaining conflicts (same-target and 2-agent swaps).
         for to_pos, aids in target_map.items():
-            if len(aids) == 1:
-                aid = aids[0]
+            unresolved = [a for a in aids if a not in confirmed]
+            if not unresolved:
+                continue
+
+            if len(unresolved) == 1:
+                aid = unresolved[0]
                 final_moves[aid] = planned_moves[aid]
                 continue
 
-            if len(aids) == 2:
-                aid1, aid2 = aids
-                from1, _ = planned_moves[aid1]
-                from2, dest2 = planned_moves[aid2]
-                _, dest1 = planned_moves[aid1]
+            if len(unresolved) == 2:
+                aid1, aid2 = unresolved
+                from1 = planned_from[aid1]
+                from2 = planned_from[aid2]
+                dest2 = planned_to[aid2]
+                dest1 = planned_to[aid1]
                 if from1 == dest2 and from2 == dest1:
                     final_moves[aid1] = (from1, dest1)
                     final_moves[aid2] = (from2, dest2)
                     continue
 
-            winner_idx = int(self.rng.integers(len(aids)))
-            for idx, aid in enumerate(aids):
-                from_pos, planned_to = planned_moves[aid]
+            winner_idx = int(self.rng.integers(len(unresolved)))
+            for idx, aid in enumerate(unresolved):
+                from_pos = planned_from[aid]
+                planned_to_pos = planned_to[aid]
                 if idx == winner_idx:
-                    final_moves[aid] = (from_pos, planned_to)
+                    final_moves[aid] = (from_pos, planned_to_pos)
                 else:
                     final_moves[aid] = (from_pos, from_pos)
 
         survivors = [aid for aid, _ in active_pairs if aid not in evacuated_this_step and aid not in casualty_this_step]
         missing_agents = [aid for aid in survivors if aid not in final_moves]
         if missing_agents:
-            print(f"WARNING: Missing agents detected: {missing_agents}")
+            logger.warning("Missing agents detected: %s", missing_agents)
             lookup = {aid: pos for aid, pos in active_pairs}
             for missing_id in missing_agents:
                 fallback_pos = lookup.get(missing_id, (0, 0))
                 final_moves[missing_id] = (fallback_pos, fallback_pos)
-                print(f"  Fallback: keeping agent {missing_id} at {fallback_pos}")
+                logger.debug("Fallback: keeping agent %s at %s", missing_id, fallback_pos)
 
         new_agents: List[Tuple[int, int]] = []
         new_agent_ids: List[int] = []
@@ -614,10 +746,19 @@ class AgentEngine:
             new_agent_ids.append(aid)
 
             prev_path = self.last_paths.get(aid, [])
+            # FIX: previously added both from_pos and to_pos each tick → duplicates, length 2x, deposit 0.5x
             if to_pos != from_pos:
-                updated_path = prev_path + [from_pos, to_pos]
+                # prev_path already ends with from_pos from previous tick, so only add to_pos
+                if prev_path and prev_path[-1] == from_pos:
+                    updated_path = prev_path + [to_pos]
+                else:
+                    updated_path = prev_path + [from_pos, to_pos]
             else:
-                updated_path = prev_path + [from_pos]
+                # Stay: only add if not already ending there
+                if prev_path and prev_path[-1] == from_pos:
+                    updated_path = prev_path
+                else:
+                    updated_path = prev_path + [from_pos]
             if len(updated_path) > 80:
                 updated_path = updated_path[-80:]
             new_paths[aid] = updated_path
@@ -628,7 +769,7 @@ class AgentEngine:
             new_recent[aid] = self.recent_positions.get(aid, deque(maxlen=32))
             new_escape_cooldown[aid] = self.escape_cooldown.get(aid, -9999)
 
-            if self.metrics:
+            if self.metrics and to_pos != from_pos:
                 self.metrics.path_length[aid] = self.metrics.path_length.get(aid, 0) + 1
 
         self.grid.agents = new_agents
