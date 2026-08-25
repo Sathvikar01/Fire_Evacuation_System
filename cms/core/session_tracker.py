@@ -7,10 +7,6 @@ from config import (
     MOVEMENT_MODE_ACO,
     MOVEMENT_MODE_DISTANCE,
     DISTANCE_SUPPRESSION_DEFAULT,
-    DISTANCE_SUPPRESSION_MAX,
-    DISTANCE_SUPPRESSION_STEP_UP,
-    DISTANCE_SUPPRESSION_STEP_DOWN,
-    DISTANCE_SUPPRESSION_MARGIN,
 )
 from performance_metrics import aggregate_mode_metrics, score_modes
 

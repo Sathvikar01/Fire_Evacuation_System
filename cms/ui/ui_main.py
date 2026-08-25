@@ -194,7 +194,6 @@ class UIMain(QWidget):
             self.graph.updateComparison(session_rows, winner, suppression, scoreboard, history_payload)
         except Exception as e:
             # Don't crash tick on graph error
-            import traceback
             print(f"[UI] graph refresh error: {e}")
 
     def closeEvent(self, event):

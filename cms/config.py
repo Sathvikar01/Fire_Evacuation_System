@@ -17,15 +17,8 @@ MOVEMENT_MODE_DEFAULT = MOVEMENT_MODE_ACO
 # Pheromone control toggles
 ENABLE_ANT_PRECOMPUTE = True     # Enable ant-based pheromone computation
 ENABLE_AGENT_DEPOSITS = True     # Enable agent pheromone deposits
-# Deprecated alias — use DUAL_PHEROMONE_ENABLED below. Kept for backward compat.
-USE_DUAL_PHEROMONE = False       # Separate ant vs agent pheromone channels (future) — DEPRECATED, use DUAL_PHEROMONE_ENABLED
-DEPOSIT_ON_EXIT = True           # Agents deposit trails only after reaching a valid exit
-# Re-export for research reproducibility: both flags stay in sync via sync_dual_pheromone_flag()
-def sync_dual_pheromone_flag():
-    global USE_DUAL_PHEROMONE, DUAL_PHEROMONE_ENABLED
-    # If either is True, enable dual
-    if USE_DUAL_PHEROMONE or DUAL_PHEROMONE_ENABLED:
-        USE_DUAL_PHEROMONE = DUAL_PHEROMONE_ENABLED = True
+# DEPOSIT_ON_EXIT removed — deposit is always on successful exit (research: fair comparison)
+# USE_DUAL_PHEROMONE alias removed — use DUAL_PHEROMONE_ENABLED only
 
 # Metrics and experiments
 ENABLE_METRICS_TRACKING = True   # Track detailed per-agent and per-run metrics
@@ -43,16 +36,11 @@ Q     = 1.0
 # Research reproducibility: 0.012 was near-deterministic (1/T=83, exp(400) overflow).
 # 0.45 gives genuine softmax exploration while preserving pheromone exploitation.
 ACO_TEMPERATURE = 0.45  # Softmax temperature — higher = more exploration (was 0.012)
-ANT_TEMPERATURE = 0.45  # Separate ant temperature (previously implicit same as ACO)
 
 # Congestion management
 CONGESTION_PENALTY_FACTOR = 1.9  # Balanced penalty to avoid over-slowing ACO
-MAX_OCCUPANCY_ALLOWED = 3        # Maximum agents allowed per cell before heavy penalty
-DISTANCE_SUPPRESSION_DEFAULT = 0.95   # Baseline suppression for distance-greedy
-DISTANCE_SUPPRESSION_MAX = 0.99       # Upper bound when forced to suppress distance mode
-DISTANCE_SUPPRESSION_STEP_UP = 0.12   # Increment when ACO underperforms or is tied
-DISTANCE_SUPPRESSION_STEP_DOWN = 0.005 # Relaxation when ACO is comfortably ahead
-DISTANCE_SUPPRESSION_MARGIN = 0.03    # Required completion-rate margin for ACO dominance
+DISTANCE_SUPPRESSION_DEFAULT = 0.95   # Baseline suppression for distance-greedy (used for session tracking)
+# DISTANCE_SUPPRESSION_MAX/STEP_UP/DOWN/MARGIN removed — rigging logic was deleted (session_tracker no-op)
 
 # Hybrid escape controls (mitigate local minima)
 STUCK_ESCAPE_ENABLED = True          # Enable hybrid escape assistance inside ACO mode
@@ -108,7 +96,6 @@ FIRE_DEATH_THRESHOLD = 0.12          # Agents become casualties above this inten
 FIRE_EXIT_COMPROMISED_THRESHOLD = 0.08
 FIRE_LOW_THRESHOLD = 0.05            # Used for ants/pheromone avoidance
 NO_SPAWN_IN_FIRE = True              # Prevent initial agents from spawning inside fire
-AVOID_FIRE_IN_ACO_ONLY = False       # All movement modes respect fire avoidance logic
 AVOID_COMPROMISED_EXITS = True       # Skip exits that are flagged as compromised by fire
 
 # Pheromone
@@ -182,8 +169,6 @@ COLOR_FIRE = (255,90,0)
 COLOR_SMOKE = (120,120,120)
 COLOR_CONGESTION = (0,180,255)
 COLOR_PHEROMONE = (160,32,240)
-COLOR_PHEROMONE_ANT = (160,32,240)      # Deep purple for ant pheromone
-COLOR_PHEROMONE_AGENT = (80,200,120)    # Green for agent reinforcement
 COLOR_GRID_LINE = (210,210,210)
 
 # Pheromone visualization tuning

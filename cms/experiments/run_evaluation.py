@@ -187,7 +187,6 @@ def run_evaluation(
 
     # Store config hash for reproducibility (ALPHA etc)
     try:
-        import hashlib as _hl
         cfg_snapshot = {k: getattr(config, k) for k in ["ALPHA","BETA","GAMMA","RHO","Q","ACO_TEMPERATURE","FIRE_TRAVERSAL_THRESHOLD","FIRE_SAFE_THRESHOLD"] if hasattr(config, k)}
     except Exception:
         cfg_snapshot = {}
