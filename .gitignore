@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 cms/experiments/results/
 cms/experiments/__pycache__/
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/compile*.log
