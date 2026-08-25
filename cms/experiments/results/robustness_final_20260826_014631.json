@@ -1,0 +1,100 @@
+{
+  "type": "robustness",
+  "config": {
+    "ticks": 40
+  },
+  "summary": {
+    "crowd": {
+      "20": {
+        "completion_mean": 0.9766666666666667,
+        "completion_ci": 0.01609504338161096,
+        "casualty_mean": 0.006666666666666667,
+        "evac_time_mean": 14.404491228070176,
+        "n": 30
+      },
+      "40": {
+        "completion_mean": 0.9591666666666667,
+        "completion_ci": 0.027346036436973097,
+        "casualty_mean": 0.011666666666666665,
+        "evac_time_mean": 15.10217391304348,
+        "n": 30
+      },
+      "60": {
+        "completion_mean": 0.9738888888888888,
+        "completion_ci": 0.016626086485077615,
+        "casualty_mean": 0.005,
+        "evac_time_mean": 16.829188299037803,
+        "n": 30
+      }
+    },
+    "grids": {
+      "15": {
+        "completion_mean": 0.9822222222222223,
+        "completion_ci": 0.012425119094159387,
+        "casualty_mean": 0.015555555555555555,
+        "evac_time_mean": 11.197612732095491,
+        "n": 30
+      },
+      "20": {
+        "completion_mean": 0.9730769230769231,
+        "completion_ci": 0.017762196180094832,
+        "casualty_mean": 0.012820512820512822,
+        "evac_time_mean": 14.829838827838827,
+        "n": 30
+      }
+    },
+    "walls": {
+      "0.02": {
+        "completion_mean": 0.9925,
+        "completion_ci": 0.008519504329653723,
+        "casualty_mean": 0.007500000000000001,
+        "evac_time_mean": 14.275949328449327,
+        "n": 30
+      },
+      "0.08": {
+        "completion_mean": 0.9591666666666667,
+        "completion_ci": 0.027346036436973097,
+        "casualty_mean": 0.011666666666666665,
+        "evac_time_mean": 15.10217391304348,
+        "n": 30
+      },
+      "0.15": {
+        "completion_mean": 0.9383333333333334,
+        "completion_ci": 0.02516496073992855,
+        "casualty_mean": 0.012500000000000002,
+        "evac_time_mean": 15.878148032803901,
+        "n": 30
+      },
+      "0.25": {
+        "completion_mean": 0.7050000000000002,
+        "completion_ci": 0.059731321805211214,
+        "casualty_mean": 0.013333333333333332,
+        "evac_time_mean": 22.0125,
+        "n": 30
+      }
+    },
+    "wind": {
+      "east_0.5": {
+        "completion_mean": 0.9625000000000001,
+        "completion_ci": 0.03158570715611293,
+        "casualty_mean": 0.013333333333333334,
+        "evac_time_mean": 15.440554284261378,
+        "n": 30
+      },
+      "none_0.0": {
+        "completion_mean": 0.9591666666666667,
+        "completion_ci": 0.027346036436973097,
+        "casualty_mean": 0.011666666666666665,
+        "evac_time_mean": 15.10217391304348,
+        "n": 30
+      },
+      "north_0.9": {
+        "completion_mean": 0.9591666666666667,
+        "completion_ci": 0.02693933087314382,
+        "casualty_mean": 0.01,
+        "evac_time_mean": 15.055011055011056,
+        "n": 30
+      }
+    }
+  }
+}

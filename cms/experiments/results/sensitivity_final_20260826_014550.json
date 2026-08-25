@@ -1,0 +1,122 @@
+{
+  "type": "sensitivity",
+  "config": {
+    "grid": 15,
+    "crowd": 30,
+    "exits": 3,
+    "walls": 0.12,
+    "ticks": 40
+  },
+  "summary": {
+    "ACO_TEMPERATURE": {
+      "0.2": {
+        "completion_mean": 0.9499999999999998,
+        "completion_ci": 0.019749620492013103,
+        "evac_time_mean": 13.726232626462512,
+        "n": 30
+      },
+      "0.45": {
+        "completion_mean": 0.95,
+        "completion_ci": 0.017650704854611985,
+        "evac_time_mean": 12.897647939544493,
+        "n": 30
+      },
+      "0.7": {
+        "completion_mean": 0.9588888888888889,
+        "completion_ci": 0.019229360621692917,
+        "evac_time_mean": 13.194445066427825,
+        "n": 30
+      },
+      "1.0": {
+        "completion_mean": 0.9600000000000001,
+        "completion_ci": 0.018899089425110923,
+        "evac_time_mean": 13.662220421128467,
+        "n": 30
+      }
+    },
+    "ALPHA": {
+      "0.5": {
+        "completion_mean": 0.9477777777777778,
+        "completion_ci": 0.020703705120208672,
+        "evac_time_mean": 12.482405185278747,
+        "n": 30
+      },
+      "1.0": {
+        "completion_mean": 0.9633333333333333,
+        "completion_ci": 0.014809109757198983,
+        "evac_time_mean": 12.884610038140417,
+        "n": 30
+      },
+      "1.35": {
+        "completion_mean": 0.95,
+        "completion_ci": 0.017650704854611985,
+        "evac_time_mean": 12.897647939544493,
+        "n": 30
+      },
+      "1.8": {
+        "completion_mean": 0.9577777777777777,
+        "completion_ci": 0.02168747561503126,
+        "evac_time_mean": 13.111150972132982,
+        "n": 30
+      },
+      "2.5": {
+        "completion_mean": 0.9666666666666667,
+        "completion_ci": 0.02077861165782171,
+        "evac_time_mean": 12.9447776111944,
+        "n": 30
+      }
+    },
+    "BETA": {
+      "1.5": {
+        "completion_mean": 0.9577777777777778,
+        "completion_ci": 0.018514423864043245,
+        "evac_time_mean": 13.531081463236637,
+        "n": 30
+      },
+      "2.0": {
+        "completion_mean": 0.9600000000000001,
+        "completion_ci": 0.01810353648339515,
+        "evac_time_mean": 13.831953147235906,
+        "n": 30
+      },
+      "3.2": {
+        "completion_mean": 0.95,
+        "completion_ci": 0.017650704854611985,
+        "evac_time_mean": 12.897647939544493,
+        "n": 30
+      },
+      "4.0": {
+        "completion_mean": 0.9522222222222222,
+        "completion_ci": 0.019980136581410915,
+        "evac_time_mean": 13.114408456486043,
+        "n": 30
+      }
+    },
+    "RHO": {
+      "0.003": {
+        "completion_mean": 0.9533333333333334,
+        "completion_ci": 0.018157657789441544,
+        "evac_time_mean": 13.40212125571321,
+        "n": 30
+      },
+      "0.009": {
+        "completion_mean": 0.95,
+        "completion_ci": 0.017650704854611985,
+        "evac_time_mean": 12.897647939544493,
+        "n": 30
+      },
+      "0.02": {
+        "completion_mean": 0.95,
+        "completion_ci": 0.019246362712213017,
+        "evac_time_mean": 12.673720443349755,
+        "n": 30
+      },
+      "0.05": {
+        "completion_mean": 0.9544444444444444,
+        "completion_ci": 0.018920710630471207,
+        "evac_time_mean": 13.54021229181328,
+        "n": 30
+      }
+    }
+  }
+}
