@@ -82,7 +82,9 @@ class SimulationMetrics:
         evacuated = int(engine.evacuated)
         casualties = int(engine.casualties)
         remaining = len(grid.agents)
-        crowd_size = max(1, grid.spec.crowd)
+        # Use actual placed crowd for rate — spec.crowd may be truncated
+        actual_crowd = getattr(grid, '_actual_crowd', grid.spec.crowd)
+        crowd_size = max(1, actual_crowd)
 
         stuck_values = list(getattr(engine, "stuck_counter", {}).values())
         total_tracked = len(stuck_values)
@@ -215,6 +217,14 @@ class SimulationMetrics:
         smoke_cells = [entry["smoke_cells"] for entry in self.tick_history]
         rho_values = [entry["dynamic_rho_avg"] for entry in self.tick_history if entry["dynamic_rho_avg"] is not None]
 
+        # FIX: use _final_stats for final rates (tick_history[-1] may be stale due to micro_steps batching or pause timing)
+        completion_final = self._final_stats.get("completion_rate")
+        casualty_final = self._final_stats.get("casualty_rate")
+        if completion_final is None:
+            completion_final = self.tick_history[-1]["completion_rate"] if self.tick_history else 0.0
+        if casualty_final is None:
+            casualty_final = self.tick_history[-1]["casualty_rate"] if self.tick_history else 0.0
+
         return {
             "tick_count": len(self.tick_history),
             "runtime_ms_avg": float(durations.mean()) if durations.size else 0.0,
@@ -228,8 +238,8 @@ class SimulationMetrics:
             "dynamic_rho_avg": float(np.mean(rho_values)) if rho_values else None,
             "wall_clock_ms": self.wall_clock_ms(),
             "reroute_events": list(self.reroute_events),
-            "completion_rate_final": self.tick_history[-1]["completion_rate"],
-            "casualty_rate_final": self.tick_history[-1]["casualty_rate"],
+            "completion_rate_final": float(completion_final),
+            "casualty_rate_final": float(casualty_final),
             "average_evacuation_time": self._final_stats.get("average_evacuation_time"),
             "avg_path_length_all": self._final_stats.get("avg_path_length_all"),
             "avg_path_length_evacuated": self._final_stats.get("avg_path_length_evacuated"),
