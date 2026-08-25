@@ -17,8 +17,15 @@ MOVEMENT_MODE_DEFAULT = MOVEMENT_MODE_ACO
 # Pheromone control toggles
 ENABLE_ANT_PRECOMPUTE = True     # Enable ant-based pheromone computation
 ENABLE_AGENT_DEPOSITS = True     # Enable agent pheromone deposits
-USE_DUAL_PHEROMONE = False       # Separate ant vs agent pheromone channels (future)
+# Deprecated alias — use DUAL_PHEROMONE_ENABLED below. Kept for backward compat.
+USE_DUAL_PHEROMONE = False       # Separate ant vs agent pheromone channels (future) — DEPRECATED, use DUAL_PHEROMONE_ENABLED
 DEPOSIT_ON_EXIT = True           # Agents deposit trails only after reaching a valid exit
+# Re-export for research reproducibility: both flags stay in sync via sync_dual_pheromone_flag()
+def sync_dual_pheromone_flag():
+    global USE_DUAL_PHEROMONE, DUAL_PHEROMONE_ENABLED
+    # If either is True, enable dual
+    if USE_DUAL_PHEROMONE or DUAL_PHEROMONE_ENABLED:
+        USE_DUAL_PHEROMONE = DUAL_PHEROMONE_ENABLED = True
 
 # Metrics and experiments
 ENABLE_METRICS_TRACKING = True   # Track detailed per-agent and per-run metrics
@@ -33,7 +40,10 @@ BETA  = 3.2
 GAMMA = 1.0
 RHO   = 0.009    # evaporation (slightly lower)
 Q     = 1.0
-ACO_TEMPERATURE = 0.012  # Softer exploration for stronger pheromone exploitation
+# Research reproducibility: 0.012 was near-deterministic (1/T=83, exp(400) overflow).
+# 0.45 gives genuine softmax exploration while preserving pheromone exploitation.
+ACO_TEMPERATURE = 0.45  # Softmax temperature — higher = more exploration (was 0.012)
+ANT_TEMPERATURE = 0.45  # Separate ant temperature (previously implicit same as ACO)
 
 # Congestion management
 CONGESTION_PENALTY_FACTOR = 1.9  # Balanced penalty to avoid over-slowing ACO
@@ -88,8 +98,12 @@ WIND_DIRECTION = "none"        # Global wind direction (none/north/east/south/we
 WIND_STRENGTH = 0.0            # Wind strength 0..1 affecting fire spread and smoke drift
 
 # Hazard thresholds / behavior
+# Research decision: FIRE_TRAVERSAL was 0.001 (120x gap vs death 0.12) → agents froze
+# while survivable low-fire (0.02) blocked them; they still died when fire grew underfoot.
+# For reproducibility set traversal to 0.08 (just below SAFE/DEATH 0.12) — allows low-fire
+# traversal with 0.04 safety buffer before casualty. Documented for paper comparison.
 FIRE_SAFE_THRESHOLD = 0.12           # Cells above this are unsafe for ACO agents
-FIRE_TRAVERSAL_THRESHOLD = 0.001     # Absolute cutoff: agents never step onto active fire
+FIRE_TRAVERSAL_THRESHOLD = 0.08      # Traversal cutoff — was 0.001, now 0.08 (buffer before 0.12 death)
 FIRE_DEATH_THRESHOLD = 0.12          # Agents become casualties above this intensity
 FIRE_EXIT_COMPROMISED_THRESHOLD = 0.08
 FIRE_LOW_THRESHOLD = 0.05            # Used for ants/pheromone avoidance
@@ -100,12 +114,33 @@ AVOID_COMPROMISED_EXITS = True       # Skip exits that are flagged as compromise
 # Pheromone
 PHEROMONE_FLOOR = 0.05
 
+# BFS seed annealing (BUG-10): The distance-seed dominates ant deposits by
+# ~300x. To let the ACO actually shape the pheromone field, the seed weight
+# decays linearly over SEED_ANNEAL_ITERS iterations during precomputation.
+SEED_ANNEAL_ENABLED = True
+SEED_ANNEAL_ITERS = 150    # Iterations over which the BFS seed decays to zero
+SEED_ANNEAL_FLOOR = 0.15   # Residual seed weight preserved after annealing
+
+# Hazard forecasting (R4): ants use predicted fire state for their heuristic.
+HAZARD_FORECAST_ENABLED = True
+HAZARD_FORECAST_HORIZON = 3   # Ticks ahead to forecast fire intensity
+HAZARD_FORECAST_GAMMA = 1.2   # Exponent for hazard penalty in ant heuristic
+
+# Dual-channel multi-objective ACO (R5)
+DUAL_PHEROMONE_ENABLED = False   # Separate speed vs safety pheromone channels
+DUAL_PHEROMONE_BLEND = 0.5       # Weight for speed channel (1-blend for safety)
+
+# Predictive congestion pheromone (R6)
+PREDICTIVE_CONGESTION_ENABLED = True
+PREDICTIVE_CONGESTION_DIFFUSION = 0.3   # Diffusion rate for negative pheromone
+PREDICTIVE_CONGESTION_DECAY = 0.05      # Decay rate for negative pheromone
+
 # Dynamic Evaporation (adaptive RHO to help stuck agents)
 RHO_DYNAMIC_ENABLED = True         # Enable dynamic evaporation rate
 RHO_DYNAMIC_MODE = 'stuck'         # 'stuck', 'agents', or 'congestion'
 RHO_MIN = 0.0015                   # Minimum evaporation rate (preserve trails longer)
 RHO_MAX = 0.06                     # Maximum evaporation rate
-RHO_STUCK_MULT = 0.85             # Multiplier when agents are stuck (lower RHO)
+RHO_STUCK_MULT = 0.70             # Multiplier when agents are stuck (was 0.85, too weak — only 15% drop, now 30%)ier when agents are stuck (lower RHO)
 RHO_AGENT_GAMMA = 0.6             # Exponent for agents-based strategy
 RHO_CONGESTION_MULT = 0.5         # Per-cell congestion multiplier
 STUCK_WINDOW = 10                  # Number of ticks to determine if agent is stuck
