@@ -91,11 +91,15 @@ def merge():
                 "completion_mean": float(np.mean(cs)),
                 "completion_ci": float(1.96*np.std(cs, ddof=1)/np.sqrt(len(cs))) if len(cs) > 1 else 0.0,
                 "sec_per_run_mean": float(np.mean(ws)),
+                "sec_per_run_median": float(np.median(ws)),
+                "sec_per_run_min": float(np.min(ws)),
+                "sec_per_run_max": float(np.max(ws)),
                 "n": len(runs)}
             print(f"{env}/{pol}: completion {summary[env][pol]['completion_mean']:.4f}"
                   f" ±{summary[env][pol]['completion_ci']:.4f} "
-                  f"sec/run {summary[env][pol]['sec_per_run_mean']:.2f}")
-    payload = {"type": "scale", "config": ENVS, "summary": summary}
+                  f"sec/run median {summary[env][pol]['sec_per_run_median']:.2f} "
+                  f"[{summary[env][pol]['sec_per_run_min']:.1f}-{summary[env][pol]['sec_per_run_max']:.1f}]")
+    payload = {"type": "scale", "config": ENVS, "results": grouped, "summary": summary}
     save_results(payload, "scale_final")
 
 

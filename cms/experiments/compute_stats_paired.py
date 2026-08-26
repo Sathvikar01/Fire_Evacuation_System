@@ -147,6 +147,24 @@ def main():
             ("astar vs dstar", comps(ext["astar"]), comps(ext["dstar"])),
         ])
 
+    # ---- Scale family (per grid size, Holm within family) ----
+    scl_files = sorted(RES.glob("scale_final_*.json"))
+    if scl_files:
+        raw_scale = json.loads(scl_files[-1].read_text())["results"]
+        pairs = []
+        for env in ["S30", "S40"]:
+            tag = "30^2" if env == "S30" else "40^2"
+            pairs.append((f"daco vs astar [{tag}]",
+                          comps(raw_scale[env]["full_cms_daco"]),
+                          comps(raw_scale[env]["astar"])))
+            pairs.append((f"distance vs astar [{tag}]",
+                          comps(raw_scale[env]["distance"]),
+                          comps(raw_scale[env]["astar"])))
+            pairs.append((f"astar vs dstar [{tag}]",
+                          comps(raw_scale[env]["astar"]),
+                          comps(raw_scale[env]["dstar"])))
+        out["scale"] = compare_family("Scale", pairs)
+
     # merge with existing legacy summary
     prev_stats = RES / "stats_summary.json"
     payload = {"paired": out}

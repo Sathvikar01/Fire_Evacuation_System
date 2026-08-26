@@ -51,7 +51,7 @@ def scale():
     for p, label, color in zip(policies, labels, colors):
         y = [data[e][p]["completion_mean"] for e in ["S30", "S40"]]
         e = [data[e][p]["completion_ci"] for e in ["S30", "S40"]]
-        t = [data[e][p]["sec_per_run_mean"] for e in ["S30", "S40"]]
+        t = [data[e][p]["sec_per_run_median"] for e in ["S30", "S40"]]
         axes[0].errorbar(x, y, yerr=e, marker="o", capsize=3,
                          label=label, color=color)
         axes[1].plot(x, t, marker="o", label=label, color=color)
