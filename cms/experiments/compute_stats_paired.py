@@ -126,13 +126,14 @@ def main():
     if obs_files:
         obs = json.loads(obs_files[-1].read_text())["results"]
         pairs = []
-        for o in ["full", "r3", "stale5", "loss50"]:
+        for o in ["full", "r3", "stale5", "loss50", "priv3"]:
             pairs.append((f"full_daco vs astar [{o}]",
                           comps(obs["full_cms_daco"][o]),
                           comps(obs["astar"][o])))
-            pairs.append((f"full_daco vs dstar [{o}]",
-                          comps(obs["full_cms_daco"][o]),
-                          comps(obs["dstar"][o])))
+            if o in obs.get("dstar", {}):
+                pairs.append((f"full_daco vs dstar [{o}]",
+                              comps(obs["full_cms_daco"][o]),
+                              comps(obs["dstar"][o])))
         out["observability"] = compare_family("Observability", pairs)
 
     # ---- Extreme family ----

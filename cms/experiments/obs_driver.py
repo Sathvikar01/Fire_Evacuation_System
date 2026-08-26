@@ -40,6 +40,7 @@ OBS = {
     "r3":      {"OBSERVABILITY_MODE": "radius", "SENSOR_RADIUS": 3},
     "stale5":  {"OBSERVABILITY_MODE": "stale",  "STALE_TICKS": 5},
     "loss50":  {"OBSERVABILITY_MODE": "loss",   "SENSE_LOSS_PROB": 0.5},
+    "priv3":   {"OBSERVABILITY_MODE": "privater3", "SENSOR_RADIUS": 3},
 }
 
 

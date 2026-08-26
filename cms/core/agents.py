@@ -78,6 +78,9 @@ class AgentEngine:
         self.belief_fire = None
         self.belief_smoke = None
         self.belief_changed = []
+        # PRIVATE beliefs: per-agent maps for 'privater3' mode (no swarm sharing)
+        self.private_belief_fire: Dict[int, np.ndarray] = {}
+        self.private_belief_smoke: Dict[int, np.ndarray] = {}
 
         # D* Lite instances per agent (lazy) for MOVEMENT_MODE_DSTAR
         from config import MOVEMENT_MODE_DSTAR as _MD
@@ -222,23 +225,29 @@ class AgentEngine:
         return int(self.rng.integers(len(candidates)))
 
     # ---------- belief accessors (partial observability) ----------
-    def _pf(self, r: int, c: int) -> float:
-        """Planner-side fire intensity (belief if available, else truth)."""
+    def _pf(self, r: int, c: int, aid: int = None) -> float:
+        """Planner-side fire intensity: private belief > shared belief > truth."""
+        pb = getattr(self, "private_belief_fire", None)
+        if aid is not None and pb and aid in pb:
+            return float(pb[aid][r, c])
         bf = getattr(self, "belief_fire", None)
         return float(bf[r, c]) if bf is not None else float(self.grid.fire[r, c])
 
-    def _ps(self, r: int, c: int) -> float:
-        """Planner-side smoke density."""
+    def _ps(self, r: int, c: int, aid: int = None) -> float:
+        """Planner-side smoke density (same precedence as _pf)."""
+        pb = getattr(self, "private_belief_smoke", None)
+        if aid is not None and pb and aid in pb:
+            return float(pb[aid][r, c])
         bs = getattr(self, "belief_smoke", None)
         return float(bs[r, c]) if bs is not None else float(self.grid.smoke[r, c])
 
-    def _hazard_cost(self, r: int, c: int) -> float:
+    def _hazard_cost(self, r: int, c: int, aid: int = None) -> float:
         """Unified planner cost for A*/D* edge entry (uses belief)."""
         if self.grid.types[r, c] == WALL:
             return float("inf")
         if not HAZARD_AWARE_ROUTING_ENABLED:
             return 1.0
-        cost = 1.0 + 15.0*self._pf(r, c) + 4.0*self._ps(r, c)
+        cost = 1.0 + 15.0*self._pf(r, c, aid) + 4.0*self._ps(r, c, aid)
         occ = float(self._occupancy_grid[r, c])
         cost += occ * 2.5
         if self.grid.types[r, c] == EXIT and bool(getattr(self.grid, "exit_compromised", np.zeros_like(self.grid.fire))[r, c]):
@@ -349,7 +358,7 @@ class AgentEngine:
 
         return scored[0][0]
 
-    def choose_move_astar(self, r: int, c: int, candidates: List[Tuple[int,int]]) -> int:
+    def choose_move_astar(self, r: int, c: int, candidates: List[Tuple[int,int]], agent_id: int = None) -> int:
         """Hazard-aware A* baseline: Dijkstra over grid costs including fire, smoke, congestion."""
         targets = set(self._get_exit_targets() or self.exit_cells)
         if not targets:
@@ -431,7 +440,7 @@ class AgentEngine:
             # (re)initialize; cost_of closes over CURRENT belief each call
             planner = self._DStarLite(
                 self.grid.spec.rows, self.grid.spec.cols,
-                cost_of=lambda nr, nc: self._hazard_cost(nr, nc),
+                cost_of=lambda nr, nc: self._hazard_cost(nr, nc, agent_id),
                 goals=targets,
             )
             self._dstar_planners[agent_id] = planner
@@ -511,15 +520,15 @@ class AgentEngine:
                 nearby_fire_penalty = 1.0
             else:
                 # Smoke penalty scales with intensity; reads BELIEF (partial obs)
-                smoke_val = self._ps(nr, nc)
+                smoke_val = self._ps(nr, nc, agent_id)
                 if smoke_val > SMOKE_PENALTY_THRESHOLD:
                     smoke_penalty = max(0.05, 1.0 - SMOKE_SPEED_PENALTY * (0.5 + 0.5 * min(1.0, (smoke_val - SMOKE_PENALTY_THRESHOLD) / 0.5)))
                 else:
                     smoke_penalty = 1.0
-                fire_repulsion = 1.0 - min(0.7, self._pf(nr, nc) * 2.8)
+                fire_repulsion = 1.0 - min(0.7, self._pf(nr, nc, agent_id) * 2.8)
                 nearby_fire_penalty = 1.0
                 for fr, fc in self.grid.neighbors4(nr, nc):
-                    if self._pf(fr, fc) > 0.01:
+                    if self._pf(fr, fc, agent_id) > 0.01:
                         nearby_fire_penalty *= 0.7
                 base *= max(0.1, fire_repulsion * nearby_fire_penalty)
             if self.prev_pos.get(agent_id) == (nr,nc): base *= 0.2
@@ -762,7 +771,7 @@ class AgentEngine:
             elif self.movement_mode == MOVEMENT_MODE_DISTANCE:
                 choice = self.choose_move_distance(agent_id, r, c, candidate_pool)
             elif self.movement_mode == MOVEMENT_MODE_ASTAR:
-                choice = self.choose_move_astar(r, c, candidate_pool)
+                choice = self.choose_move_astar(r, c, candidate_pool, agent_id)
             elif self.movement_mode == MOVEMENT_MODE_DSTAR:
                 choice = self.choose_move_dstar(r, c, candidate_pool, agent_id)
             else:  # ACO and STANDARD_ACO share ACO chooser (flags differentiate via config)

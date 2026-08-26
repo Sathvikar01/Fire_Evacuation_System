@@ -86,7 +86,7 @@ def run_chunk(mode_name, seed_start, seed_end):
 
 
 def merge():
-    files = sorted(Path(__file__).parent.glob("results/ext_*_[0-9]*_[0-9]*.json"))
+    files = sorted(Path(__file__).parent.glob("results/ext_*_1_30.json"))
     grouped = {}
     for f in files:
         data = json.loads(f.read_text())

@@ -36,6 +36,14 @@ CONFIGS = {
         "mode": config.MOVEMENT_MODE_ASTAR,
         "flags": {},
     },
+    "dstar": {
+        "mode": config.MOVEMENT_MODE_DSTAR,
+        "flags": {},
+    },
+    "random": {
+        "mode": config.MOVEMENT_MODE_RANDOM,
+        "flags": {},
+    },
     "standard_aco": {
         "mode": config.MOVEMENT_MODE_STANDARD_ACO,
         "flags": {
@@ -91,11 +99,12 @@ def run_chunk(mode_name, seed_start, seed_end):
 
 
 def merge():
-    files = sorted(Path(__file__).parent.glob("results/hard_*_[0-9]*_[0-9]*.json"))
-    # exclude previously merged final file pattern collisions by strict regex above
+    files = sorted(Path(__file__).parent.glob("results/hard_*_1_30.json"))
     grouped = {}
     for f in files:
         data = json.loads(f.read_text())
+        if "mode" not in data or "results" not in data:
+            continue
         grouped.setdefault(data["mode"], []).extend(data["results"])
     missing = [m for m in CONFIGS if m not in grouped]
     if missing:

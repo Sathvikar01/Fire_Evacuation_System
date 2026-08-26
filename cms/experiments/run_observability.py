@@ -53,6 +53,7 @@ OBS = {
     "r3":      {"OBSERVABILITY_MODE": "radius", "SENSOR_RADIUS": 3},
     "stale5":  {"OBSERVABILITY_MODE": "stale",  "STALE_TICKS": 5},
     "loss50":  {"OBSERVABILITY_MODE": "loss",   "SENSE_LOSS_PROB": 0.5},
+    "priv3":   {"OBSERVABILITY_MODE": "privater3", "SENSOR_RADIUS": 3},
 }
 
 
@@ -89,14 +90,20 @@ def run_chunk(policy, obs_key, seed_start, seed_end):
 
 
 def merge():
-    files = sorted(Path(__file__).parent.glob("results/obs_*_*_[0-9]*_[0-9]*.json"))
+    files = sorted(Path(__file__).parent.glob("results/obs_*_*_1_30.json"))
     grouped = {}
     for f in files:
         data = json.loads(f.read_text())
         grouped.setdefault(data["policy"], {}).setdefault(data["obs"], []).extend(
             data["results"])
-    missing = [(p, o) for p in POLICY_FLAGS for o in OBS
+    required = ["full", "r3", "stale5", "loss50"]
+    missing = [(p, o) for p in POLICY_FLAGS for o in required
                if o not in grouped.get(p, {})]
+    # Private sensing was intentionally run only for A* and Full CMS-DACO;
+    # D* Lite remains on the shared-belief four-condition matrix.
+    for p in ("astar", "full_cms_daco"):
+        if "priv3" not in grouped.get(p, {}):
+            missing.append((p, "priv3"))
     if missing:
         print(f"Missing combos: {missing}")
         sys.exit(1)

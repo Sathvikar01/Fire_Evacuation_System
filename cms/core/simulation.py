@@ -175,6 +175,25 @@ class Simulation:
         changed = []
         if MODE == "full":
             return
+        if MODE == "privater3":
+            # Each agent maintains a PRIVATE map updated only by its own sensing;
+            # no swarm sharing. Unvisited cells read as safe (0).
+            R_, C_ = g.spec.rows, g.spec.cols
+            eng = self.engine
+            for aid, (r, c) in zip(g.agent_ids, g.agents):
+                bf = eng.private_belief_fire.get(aid)
+                if bf is None:
+                    bf = np.zeros((R_, C_), dtype=np.float32)
+                    bs = np.zeros((R_, C_), dtype=np.float32)
+                    eng.private_belief_fire[aid] = bf
+                    eng.private_belief_smoke[aid] = bs
+                else:
+                    bs = eng.private_belief_smoke[aid]
+                r0, r1 = max(0, r-SENSOR_RADIUS), min(R_, r+SENSOR_RADIUS+1)
+                c0, c1 = max(0, c-SENSOR_RADIUS), min(C_, c+SENSOR_RADIUS+1)
+                bf[r0:r1, c0:c1] = g.fire[r0:r1, c0:c1]
+                bs[r0:r1, c0:c1] = g.smoke[r0:r1, c0:c1]
+            return
         if MODE == "radius":
             seen = np.zeros_like(self.belief_fire, dtype=bool)
             for (r, c) in g.agents:

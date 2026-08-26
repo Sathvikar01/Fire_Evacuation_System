@@ -31,6 +31,8 @@ TICKS = 40
 CONFIGS = {
     "distance": {"mode": config.MOVEMENT_MODE_DISTANCE, "flags": {}},
     "astar": {"mode": config.MOVEMENT_MODE_ASTAR, "flags": {}},
+    "dstar": {"mode": config.MOVEMENT_MODE_DSTAR, "flags": {}},
+    "random": {"mode": config.MOVEMENT_MODE_RANDOM, "flags": {}},
     "standard_aco": {
         "mode": config.MOVEMENT_MODE_STANDARD_ACO,
         "flags": {
@@ -78,7 +80,7 @@ def run_chunk(mode_name, seed_start, seed_end):
 
 
 def merge():
-    files = sorted(Path(__file__).parent.glob("results/base_*_[0-9]*_[0-9]*.json"))
+    files = sorted(Path(__file__).parent.glob("results/base_*_1_30.json"))
     grouped = {}
     for f in files:
         data = json.loads(f.read_text())
