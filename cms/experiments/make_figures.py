@@ -135,9 +135,87 @@ def fig_sensitivity():
     plt.close(fig)
 
 
+def fig_observability():
+    files = sorted(RES.glob("observability_final_*.json"))
+    if not files:
+        return
+    summ = json.loads(files[-1].read_text())["summary"]
+    modes = ["full", "r3", "stale5", "loss50"]
+    labels = ["Full\nknowledge", "Local sensing\n(r=3)", "Stale map\n(5 ticks)", "50% packet\nloss"]
+    plt.figure(figsize=(3.6, 2.5))
+    series = [("astar", "Hazard-aware A*", "#c0504d", "o"),
+              ("dstar", "D* Lite", "#4f81bd", "s"),
+              ("full_cms_daco", "Full CMS-DACO", "#9bbb59", "^")]
+    for key, label, color, marker in series:
+        ys = [summ[key][m]["completion_mean"] for m in modes]
+        es = [summ[key][m]["completion_ci"] for m in modes]
+        plt.errorbar(range(len(modes)), ys, yerr=es, marker=marker, ms=4,
+                     capsize=3, label=label, color=color)
+    plt.xticks(range(len(modes)), labels, fontsize=7)
+    plt.ylabel("Evacuation completion")
+    plt.ylim(0.85, 1.01)
+    plt.legend(fontsize=7, loc="lower left")
+    plt.tight_layout()
+    plt.savefig(OUT / "fig_observability.pdf", bbox_inches="tight")
+    plt.close()
+
+
+def fig_extreme():
+    files = sorted(RES.glob("extreme_final_*.json"))
+    if not files:
+        return
+    summ = json.loads(files[-1].read_text())["summary"]
+    order = ["distance", "astar", "dstar", "standard_aco", "full_cms_daco"]
+    labels = ["Distance\n(BFS)", "A*", "D*\nLite", "Std.\nACO", "Full\nDACO"]
+    comp_m = [summ[m]["completion_rate"]["mean"] for m in order]
+    comp_e = [summ[m]["completion_rate"]["ci95"] or 0 for m in order]
+    cas_m = [summ[m]["casualty_rate"]["mean"] for m in order]
+    cas_e = [summ[m]["casualty_rate"]["ci95"] or 0 for m in order]
+    x = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(3.6, 2.5))
+    ax.bar(x-0.2, comp_m, 0.38, yerr=comp_e, capsize=3, label="Completion",
+           color="#4f81bd", edgecolor="black", linewidth=0.4)
+    ax.bar(x+0.2, cas_m, 0.38, yerr=cas_e, capsize=3, label="Casualty",
+           color="#c0504d", edgecolor="black", linewidth=0.4)
+    ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=7)
+    ax.set_ylim(0, 0.72); ax.legend(fontsize=7)
+    plt.tight_layout()
+    plt.savefig(OUT / "fig_extreme.pdf", bbox_inches="tight")
+    plt.close()
+
+
+def fig_budget():
+    files = sorted(RES.glob("budget_final_*.json"))
+    if not files:
+        return
+    summ = json.loads(files[-1].read_text())["summary"]
+    levels = ["B1", "B2", "B3", "B4"]
+    xs = [summ[l]["sec_per_run_mean"] for l in levels]
+    ys = [summ[l]["completion_mean"] for l in levels]
+    es = [summ[l]["completion_ci"] for l in levels]
+    plt.figure(figsize=(3.4, 2.4))
+    plt.errorbar(xs, ys, yerr=es, marker="o", ms=5, capsize=3, color="#8064a2")
+    for l, x, y in zip(levels, xs, ys):
+        plt.annotate(l, (x, y), textcoords="offset points", xytext=(6, -2),
+                     fontsize=7)
+    plt.axhline(0.9911, color="#c0504d", ls="--", lw=1,
+                label="A* (0.99, ~0.8 s/run)")
+    plt.xlabel("Wall-clock seconds per run (log scale)")
+    plt.xscale("log")
+    plt.ylabel("Completion")
+    plt.ylim(0.88, 1.005)
+    plt.legend(fontsize=7)
+    plt.tight_layout()
+    plt.savefig(OUT / "fig_budget.pdf", bbox_inches="tight")
+    plt.close()
+
+
 if __name__ == "__main__":
     fig_baselines()
     fig_ablation()
     fig_robustness()
     fig_sensitivity()
+    fig_observability()
+    fig_extreme()
+    fig_budget()
     print("Figures written to", OUT)
