@@ -1,0 +1,73 @@
+{
+  "type": "scale",
+  "config": {
+    "S30": {
+      "grid": 30,
+      "crowd": 60,
+      "exits": 4,
+      "walls": 0.15,
+      "ticks": 60
+    },
+    "S40": {
+      "grid": 40,
+      "crowd": 100,
+      "exits": 4,
+      "walls": 0.15,
+      "ticks": 90
+    }
+  },
+  "summary": {
+    "S30": {
+      "astar": {
+        "completion_mean": 0.9991666666666668,
+        "completion_ci": 0.0016333333333333382,
+        "sec_per_run_mean": 40.58766485452652,
+        "n": 20
+      },
+      "distance": {
+        "completion_mean": 0.8708333333333333,
+        "completion_ci": 0.03813055059776725,
+        "sec_per_run_mean": 10.458676040172577,
+        "n": 20
+      },
+      "dstar": {
+        "completion_mean": 0.9491666666666667,
+        "completion_ci": 0.031482529268195815,
+        "sec_per_run_mean": 4.422671377658844,
+        "n": 20
+      },
+      "full_cms_daco": {
+        "completion_mean": 0.8875,
+        "completion_ci": 0.0376114911829596,
+        "sec_per_run_mean": 206.60682274103164,
+        "n": 20
+      }
+    },
+    "S40": {
+      "astar": {
+        "completion_mean": 0.9960000000000001,
+        "completion_ci": 0.007839999999999996,
+        "sec_per_run_mean": 166.8721035838127,
+        "n": 20
+      },
+      "distance": {
+        "completion_mean": 0.7955,
+        "completion_ci": 0.04537895153157753,
+        "sec_per_run_mean": 16.179441571235657,
+        "n": 20
+      },
+      "dstar": {
+        "completion_mean": 0.9349999999999999,
+        "completion_ci": 0.026045070247755635,
+        "sec_per_run_mean": 9.110231018066406,
+        "n": 20
+      },
+      "full_cms_daco": {
+        "completion_mean": 0.8275,
+        "completion_ci": 0.05376854784018352,
+        "sec_per_run_mean": 391.5812641620636,
+        "n": 20
+      }
+    }
+  }
+}
