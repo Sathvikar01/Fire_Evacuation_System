@@ -1,0 +1,35 @@
+{
+  "type": "budget",
+  "config": {
+    "grid": 15,
+    "crowd": 30,
+    "walls": 0.15,
+    "ticks": 40
+  },
+  "summary": {
+    "B1": {
+      "completion_mean": 0.9299999999999999,
+      "completion_ci": 0.03245571735089482,
+      "sec_per_run_mean": 182.01836952368419,
+      "n": 30
+    },
+    "B2": {
+      "completion_mean": 0.9444444444444444,
+      "completion_ci": 0.030745282096962402,
+      "sec_per_run_mean": 77.44036910533904,
+      "n": 30
+    },
+    "B3": {
+      "completion_mean": 0.9522222222222222,
+      "completion_ci": 0.024401970762555975,
+      "sec_per_run_mean": 40.87794242699941,
+      "n": 30
+    },
+    "B4": {
+      "completion_mean": 0.9355555555555556,
+      "completion_ci": 0.02404754195669937,
+      "sec_per_run_mean": 18.55134539604187,
+      "n": 30
+    }
+  }
+}
