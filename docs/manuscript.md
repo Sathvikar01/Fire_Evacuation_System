@@ -18,7 +18,7 @@ Random · BFS-distance greedy · Hazard-aware A\* (per-tick) · **D\* Lite** (in
 | **Partial observability** (shared r=3 / stale Δt=5 / 50% loss / private r=3) | **No flip**: A* .991–.994 everywhere; DACO .930–.940; private r=3 DACO .932 vs A* .991; gap Holm p≤.0022 |
 | **Extreme stress** (20% walls, 2 fire fronts, exits collapse @t=12/24, wind .8) | Ceiling broken (.40–.53); **ordering reverses**: greedy Distance beats A* (Holm p=.049) — A* over-commits crowds to exits that then burn |
 | **Compute budget** (ants ×{1,⅓,1/10,1/30}) | Quality flat from 182→19 s/run; budget-matching cannot close the gap |
-| **Scale** (30² / 40², N=20) | A* remains .999/.996; Full DACO .888/.828; A* runtime 40.6→166.9 s/run; DACO 206.6→391.6 |
+| **Scale** (30² / 40², N=30) | A* .999/.997; Full DACO .872/.864 (both Holm p<2×10⁻⁶); median s/run: A* 29→123 (4.2×), DACO 242→386 (1.6×); cost ratio shrinks 8.3×→3.1× |
 
 ## Answer
 **Not in any tested regime.** Where information suffices, replanning dominates; where it fails or turns adversarial, simple hedged heuristics capture the robustness margin — stigmergy does not. The contribution is the benchmark itself: matched-information baselines up to incremental search, ceiling-breaking stress design, paired-seed statistics, budget fairness.
