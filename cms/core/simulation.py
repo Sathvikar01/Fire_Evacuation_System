@@ -73,14 +73,24 @@ class Simulation:
         self._exit_fire_blocked_prev = np.zeros_like(self.grid.exit_compromised, dtype=bool)
         
         # Movement and pheromone control
-        from config import MOVEMENT_MODE_ASTAR, MOVEMENT_MODE_STANDARD_ACO
+        from config import MOVEMENT_MODE_ASTAR, MOVEMENT_MODE_STANDARD_ACO, MOVEMENT_MODE_DSTAR
         self.movement_mode = movement_mode if movement_mode else MOVEMENT_MODE_DEFAULT
         self.enable_ant_precompute = ENABLE_ANT_PRECOMPUTE
         self.enable_agent_deposits = ENABLE_AGENT_DEPOSITS
-        # Only ACO variants use pheromone; distance/random/astar are non-pheromone baselines
+        # Only ACO variants use pheromone; distance/random/astar/dstar are non-pheromone baselines
         if self.movement_mode not in (MOVEMENT_MODE_ACO, MOVEMENT_MODE_STANDARD_ACO):
             self.enable_ant_precompute = False
             self.enable_agent_deposits = False
+
+        # Partial observability: belief fields used by PLANNERS (costs/penalties).
+        # Physics (fire growth, casualties) always uses the true grid fields.
+        from config import OBSERVABILITY_MODE
+        R, C = spec.rows, spec.cols
+        self.observability_mode = OBSERVABILITY_MODE
+        self.belief_fire = np.zeros((R, C), dtype=np.float32)
+        self.belief_smoke = np.zeros((R, C), dtype=np.float32)
+        self._belief_changed: list = []
+
         
         # Dynamic evaporation control
         self.rho_dynamic_enabled = RHO_DYNAMIC_ENABLED
@@ -150,6 +160,53 @@ class Simulation:
         """Check if pheromone operations should be active (ACO variants only)"""
         from config import MOVEMENT_MODE_STANDARD_ACO
         return self.movement_mode in (MOVEMENT_MODE_ACO, MOVEMENT_MODE_STANDARD_ACO) and (self.enable_ant_precompute or self.enable_agent_deposits)
+
+    def _update_belief(self):
+        """Update planner belief fields per observability mode.
+
+        full  : belief == truth (no-op, keeps arrays referenced but unused)
+        radius: agents write true f,s within SENSOR_RADIUS of their position
+        stale : whole-field refresh to truth every STALE_TICKS ticks
+        loss  : each cell refreshed with prob SENSE_LOSS_PROB else holds old value
+        """
+        from config import (OBSERVABILITY_MODE as MODE, SENSOR_RADIUS,
+                            STALE_TICKS, SENSE_LOSS_PROB)
+        g = self.grid
+        changed = []
+        if MODE == "full":
+            return
+        if MODE == "radius":
+            seen = np.zeros_like(self.belief_fire, dtype=bool)
+            for (r, c) in g.agents:
+                r0, r1 = max(0, r-SENSOR_RADIUS), min(g.spec.rows, r+SENSOR_RADIUS+1)
+                c0, c1 = max(0, c-SENSOR_RADIUS), min(g.spec.cols, c+SENSOR_RADIUS+1)
+                seen[r0:r1, c0:c1] = True
+            for arr_b, arr_t in ((self.belief_fire, g.fire), (self.belief_smoke, g.smoke)):
+                diff = seen & (arr_b != arr_t)
+                arr_b[seen] = arr_t[seen]
+            ys, xs = np.nonzero(seen)
+            changed = list(zip(ys.tolist(), xs.tolist()))
+        elif MODE == "stale":
+            if self.tick_counter % max(1, STALE_TICKS) == 0 or self.tick_counter == 1:
+                diff_mask = (self.belief_fire != g.fire) | (self.belief_smoke != g.smoke)
+                self.belief_fire[:, :] = g.fire
+                self.belief_smoke[:, :] = g.smoke
+                ys, xs = np.nonzero(diff_mask)
+                changed = list(zip(ys.tolist(), xs.tolist()))
+        elif MODE == "loss":
+            roll = self.rng.random(self.belief_fire.shape)
+            fresh = roll < SENSE_LOSS_PROB
+            for arr_b, arr_t in ((self.belief_fire, g.fire), (self.belief_smoke, g.smoke)):
+                arr_b[fresh] = arr_t[fresh]
+            ys, xs = np.nonzero(fresh)
+            changed = list(zip(ys.tolist(), xs.tolist()))
+        # Publish to engine for planner-side reads (costs / penalties)
+        self._belief_changed = changed
+        if self.engine is not None:
+            self.engine.belief_fire = self.belief_fire
+            self.engine.belief_smoke = self.belief_smoke
+            self.engine.belief_changed = changed
+
 
     def store_initial_state(self):
         if hasattr(self.grid, "store_initial_state"):
@@ -559,6 +616,9 @@ class Simulation:
 
         tick_start = time.perf_counter()
         dynamic_rho_snapshot = None
+
+        # Partial observability: update planner belief BEFORE any planning reads
+        self._update_belief()
 
         micro_steps = FAST_MODE_STEPS_PER_TICK if len(self.grid.agents) <= FAST_MODE_THRESHOLD else 1
         # FIX: evaporation must stay synchronized with micro-steps.

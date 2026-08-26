@@ -7,7 +7,7 @@ from .grid import Grid, EMPTY, WALL, EXIT
 from config import (
     ALPHA, BETA, GAMMA, SMOKE_SPEED_PENALTY, FAST_MODE_THRESHOLD,
     MOVEMENT_MODE_ACO, MOVEMENT_MODE_RANDOM, MOVEMENT_MODE_DISTANCE,
-    MOVEMENT_MODE_ASTAR, MOVEMENT_MODE_STANDARD_ACO,
+    MOVEMENT_MODE_ASTAR, MOVEMENT_MODE_STANDARD_ACO, MOVEMENT_MODE_DSTAR,
     ENABLE_METRICS_TRACKING, CONGESTION_PENALTY_FACTOR,
     FIRE_SAFE_THRESHOLD, FIRE_DEATH_THRESHOLD, FIRE_LOW_THRESHOLD,
     SMOKE_PENALTY_THRESHOLD, AVOID_COMPROMISED_EXITS, FIRE_EXIT_COMPROMISED_THRESHOLD,
@@ -73,6 +73,22 @@ class AgentEngine:
         self.avoid_compromised_exits = avoid_compromised_exits
         self.fire_avoid_threshold = FIRE_SAFE_THRESHOLD
         self.distance_suppression = DISTANCE_SUPPRESSION_DEFAULT
+
+        # Partial observability: planner belief fields (None => full knowledge)
+        self.belief_fire = None
+        self.belief_smoke = None
+        self.belief_changed = []
+
+        # D* Lite instances per agent (lazy) for MOVEMENT_MODE_DSTAR
+        from config import MOVEMENT_MODE_DSTAR as _MD
+        self._dstar_planners: Dict[int, "object"] = {}
+        if movement_mode == _MD:
+            try:
+                from .dstar import DStarLite
+                self._DStarLite = DStarLite
+            except Exception:
+                self._DStarLite = None
+
 
         self.exit_cells = [(int(r), int(c)) for (r,c) in np.argwhere(self.grid.types == EXIT)]
         # Use agent IDs as keys instead of indices
@@ -204,6 +220,30 @@ class AgentEngine:
     def choose_move_random(self, candidates: List[Tuple[int,int]]) -> int:
         """Random movement baseline: pick random neighbor"""
         return int(self.rng.integers(len(candidates)))
+
+    # ---------- belief accessors (partial observability) ----------
+    def _pf(self, r: int, c: int) -> float:
+        """Planner-side fire intensity (belief if available, else truth)."""
+        bf = getattr(self, "belief_fire", None)
+        return float(bf[r, c]) if bf is not None else float(self.grid.fire[r, c])
+
+    def _ps(self, r: int, c: int) -> float:
+        """Planner-side smoke density."""
+        bs = getattr(self, "belief_smoke", None)
+        return float(bs[r, c]) if bs is not None else float(self.grid.smoke[r, c])
+
+    def _hazard_cost(self, r: int, c: int) -> float:
+        """Unified planner cost for A*/D* edge entry (uses belief)."""
+        if self.grid.types[r, c] == WALL:
+            return float("inf")
+        if not HAZARD_AWARE_ROUTING_ENABLED:
+            return 1.0
+        cost = 1.0 + 15.0*self._pf(r, c) + 4.0*self._ps(r, c)
+        occ = float(self._occupancy_grid[r, c])
+        cost += occ * 2.5
+        if self.grid.types[r, c] == EXIT and bool(getattr(self.grid, "exit_compromised", np.zeros_like(self.grid.fire))[r, c]):
+            cost += 8.0
+        return cost
     
     def choose_move_distance(
         self,
@@ -314,24 +354,9 @@ class AgentEngine:
         targets = set(self._get_exit_targets() or self.exit_cells)
         if not targets:
             return int(self.rng.integers(len(candidates)))
-        # Cost map: base 1 + hazard penalties
+        # Cost map via belief-aware unified cost (full mode => true fields)
         def cell_cost(nr, nc):
-            if self.grid.types[nr,nc] == WALL:
-                return float('inf')
-            c = 1.0
-            # Hazard-aware: if disabled (ablation), cost is uniform
-            if HAZARD_AWARE_ROUTING_ENABLED:
-                f = float(self.grid.fire[nr,nc])
-                s = float(self.grid.smoke[nr,nc])
-                # Fire strongly penalized, smoke moderately
-                c += f * 15.0 + s * 4.0
-                # Congestion
-                occ = float(self._occupancy_grid[nr,nc]) if hasattr(self, '_occupancy_grid') else 0.0
-                c += occ * 2.5
-                # Compromised exit extra penalty
-                if self.grid.types[nr,nc] == EXIT and self.grid.exit_compromised[nr,nc]:
-                    c += 8.0
-            return c
+            return self._hazard_cost(nr, nc)
 
         # Use Dijkstra (A* with Manhattan heuristic) from current pos
         # Since grid small (<=120), Dijkstra is fine; limit visited to ~R*C
@@ -392,7 +417,43 @@ class AgentEngine:
         # If cur not in immediate candidates (due to cost model), pick closest candidate to cur
         best = min(candidates, key=lambda cell: manhattan(cell, cur))
         return candidates.index(best)
-    
+
+    def choose_move_dstar(self, r: int, c: int, candidates: List[Tuple[int,int]], agent_id: int) -> int:
+        """D* Lite incremental replanning baseline (belief-aware costs)."""
+        if getattr(self, "_DStarLite", None) is None:
+            return self.choose_move_astar(r, c, candidates)
+        targets = set(self._get_exit_targets() or self.exit_cells)
+        if not targets:
+            return int(self.rng.integers(len(candidates)))
+
+        planner = self._dstar_planners.get(agent_id)
+        if planner is None or planner.goals != frozenset(targets):
+            # (re)initialize; cost_of closes over CURRENT belief each call
+            planner = self._DStarLite(
+                self.grid.spec.rows, self.grid.spec.cols,
+                cost_of=lambda nr, nc: self._hazard_cost(nr, nc),
+                goals=targets,
+            )
+            self._dstar_planners[agent_id] = planner
+            planner.compute_shortest_path((r, c))
+
+        # Incremental updates only where belief actually changed this tick
+        changed = list(getattr(self, "belief_changed", []) or [])
+        if changed:
+            planner.on_agent_moved((r, c))          # accrue km for agent motion
+            planner.notify_costs_changed(changed)
+        else:
+            planner.on_agent_moved((r, c))
+        planner.compute_shortest_path((r, c), max_expansions=600)
+
+        nxt = planner.next_step((r, c))
+        if nxt is None:
+            return self.choose_move_distance(agent_id, r, c, candidates)
+        if nxt in candidates:
+            return candidates.index(nxt)
+        best = min(candidates, key=lambda cell: manhattan(cell, nxt))
+        return candidates.index(best)
+
     def choose_move_aco(self, r: int, c: int, candidates: List[Tuple[int,int]], 
                         occupied: set, agent_id: int) -> int:
         """ACO-based movement with pheromone and distance scoring"""
@@ -449,16 +510,16 @@ class AgentEngine:
                 fire_repulsion = 1.0
                 nearby_fire_penalty = 1.0
             else:
-                # Smoke penalty scales with intensity, not binary (was 0.55 fixed)
-                smoke_val = float(self.grid.smoke[nr,nc])
+                # Smoke penalty scales with intensity; reads BELIEF (partial obs)
+                smoke_val = self._ps(nr, nc)
                 if smoke_val > SMOKE_PENALTY_THRESHOLD:
                     smoke_penalty = max(0.05, 1.0 - SMOKE_SPEED_PENALTY * (0.5 + 0.5 * min(1.0, (smoke_val - SMOKE_PENALTY_THRESHOLD) / 0.5)))
                 else:
                     smoke_penalty = 1.0
-                fire_repulsion = 1.0 - min(0.7, self.grid.fire[nr, nc] * 2.8)
+                fire_repulsion = 1.0 - min(0.7, self._pf(nr, nc) * 2.8)
                 nearby_fire_penalty = 1.0
                 for fr, fc in self.grid.neighbors4(nr, nc):
-                    if self.grid.fire[fr, fc] > 0.01:
+                    if self._pf(fr, fc) > 0.01:
                         nearby_fire_penalty *= 0.7
                 base *= max(0.1, fire_repulsion * nearby_fire_penalty)
             if self.prev_pos.get(agent_id) == (nr,nc): base *= 0.2
@@ -702,6 +763,8 @@ class AgentEngine:
                 choice = self.choose_move_distance(agent_id, r, c, candidate_pool)
             elif self.movement_mode == MOVEMENT_MODE_ASTAR:
                 choice = self.choose_move_astar(r, c, candidate_pool)
+            elif self.movement_mode == MOVEMENT_MODE_DSTAR:
+                choice = self.choose_move_dstar(r, c, candidate_pool, agent_id)
             else:  # ACO and STANDARD_ACO share ACO chooser (flags differentiate via config)
                 current_dist = self._distance_to_goal((r, c))
                 last_known_dist = self.last_dist.get(agent_id)

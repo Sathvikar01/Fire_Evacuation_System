@@ -106,11 +106,29 @@ def run_single(seed: int, grid: int, crowd: int, exits: int, walls: float, mode:
                 for r,c in to_block:
                     s.grid.exit_compromised[r,c] = True
                     s.grid.fire[r,c] = 0.5
+
+        def _block_one_more(tag):
+            remaining = [tuple(map(int,c)) for c in np.argwhere(s.grid.types==2)
+                         if not s.grid.exit_compromised[tuple(c)]]
+            if not remaining:
+                return False
+            import random as _rnd
+            r, c = remaining[_rnd.randrange(len(remaining))]
+            s.grid.exit_compromised[r, c] = True
+            s.grid.fire[r, c] = max(float(s.grid.fire[r, c]), 0.5)
+            s.metrics.record_reroute(s.tick_counter, f"exit_collapsed_{tag}")
+            return True
+
+        dyn_ticks = sorted(int(t) for t in (extra_flags.get("DYNAMIC_BLOCK_TICKS") or []))
+        fired_blocks = 0
         s.start()
         if s.timer is not None:
             try: s.timer.stop()
             except: pass
         for _ in range(ticks):
+            if fired_blocks < len(dyn_ticks) and s.tick_counter >= dyn_ticks[fired_blocks]:
+                _block_one_more(fired_blocks + 1)
+                fired_blocks += 1
             s.step()
             if not s.running:
                 break

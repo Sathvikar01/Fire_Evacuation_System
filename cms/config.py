@@ -14,7 +14,14 @@ MOVEMENT_MODE_RANDOM = "random"      # Random movement baseline
 MOVEMENT_MODE_DISTANCE = "distance"  # Distance-greedy baseline (BFS)
 MOVEMENT_MODE_ASTAR = "astar"        # Hazard-aware A* baseline (dynamic costs)
 MOVEMENT_MODE_STANDARD_ACO = "standard_aco"  # ACO without DACO enhancements
+MOVEMENT_MODE_DSTAR = "dstar"        # D* Lite incremental replanning baseline
 MOVEMENT_MODE_DEFAULT = MOVEMENT_MODE_ACO
+
+# Partial observability (planning-cost knowledge; physics/deaths always use true field)
+OBSERVABILITY_MODE = "full"   # full | radius | stale | loss
+SENSOR_RADIUS = 3             # radius mode: agents sense true f,s within this Manhattan radius
+STALE_TICKS = 5               # stale mode: belief refreshed to truth every N ticks
+SENSE_LOSS_PROB = 1.0         # loss mode: probability a cell gets a fresh observation per tick
 
 # Pheromone control toggles
 ENABLE_ANT_PRECOMPUTE = True     # Enable ant-based pheromone computation
