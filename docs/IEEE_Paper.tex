@@ -7,9 +7,11 @@
 
 \begin{document}
 
-\title{CMS-DACO: Dynamic Ant Colony Optimization for Crowd Evacuation\\under Spreading Fire --- An Empirical Study Against\\Classical Replanning Baselines}
+\title{When Does Stigmergic Routing Help Evacuation?\\[2pt]
+\large An Empirical Study of Dynamic Ant Colony Optimization under Spreading Fire,\\
+Partial Observability, and Compute Budgets}
 
-\author{\IEEEauthorblockN{Sathvika R.}
+\author{\IEEEauthorblockN{Sathvika R.} % TODO(author): verify full name/affiliation before submission
 \IEEEauthorblockA{\textit{Independent Researcher}\\
 Bengaluru, India\\
 \texttt{sathvik@users.noreply.huggingface.co}}}
@@ -17,7 +19,7 @@ Bengaluru, India\\
 \maketitle
 
 \begin{abstract}
-We present CMS-DACO, an open-source evacuation simulator that couples cellular-automata pedestrian dynamics with a Dynamic Ant Colony Optimization (DACO) planner operating on a spreading fire and smoke field. The system integrates four mechanisms: a BFS distance backbone used to seed pheromone fields; annealed ant-based pheromone refinement; a dual-channel pheromone separating speed from safety; and predictive congestion signaling. We evaluate CMS-DACO against three baselines---random walk, greedy BFS-distance, and per-tick replanning hazard-aware A*---on open and dynamically degraded environments (higher obstacle density, a burning blocked exit, directional wind), with $N{=}30$ seeded runs per configuration, 95\% confidence intervals, Welch $t$-tests, and Cohen's $d$ effect sizes. Three findings emerge. First, any directed policy massively outperforms random walking (completion $0.93$--$0.99$ vs.\ $0.07$--$0.13$; $d\geq 17$). Second, per-tick A* replanning is the strongest policy in \emph{all} tested conditions, significantly exceeding the full DACO stack on both open ($0.998$ vs.\ $0.974$, $p{=}0.004$, $d{=}0.81$) and degraded ($0.991$ vs.\ $0.930$, $p{=}0.001$, $d{=}0.92$) maps, at identical information access. Third, removing individual DACO components shifts completion by at most $1.2$ percentage points ($p\geq0.34$), and sweep studies over $\alpha,\beta,\rho,T$ show flat response within confidence bands, indicating the pheromone machinery adds computational cost without measurable benefit when agents have full, instantaneous map knowledge. We release the simulator, harness, raw results, seeds, and figures to support reproducible benchmarking of decentralized evacuation planners against strong centralized baselines.
+Stigmergic routing (ant colony optimization, ACO) is widely proposed for building evacuation under spreading hazards, almost always against weak baselines. We present CMS-DACO, an open-source grid-world testbed coupling cellular pedestrian dynamics with a vectorized fire/smoke/wind engine, and use it to ask \emph{when}, if ever, cached pheromone guidance beats classical replanning. Five policies---random walk, greedy BFS-distance, per-tick hazard-aware A*, incremental D* Lite, and a full DACO stack (BFS-seeded pheromone, annealed ants, dual speed/safety channels, predictive congestion)---are compared under matched information with $N{=}30$ paired seeds per cell; we report 95\% CIs, paired t-tests, Wilcoxon signed-rank tests, bootstrap CIs of paired differences, and Holm-corrected families. Four regimes are probed: open and degraded maps, \emph{partial observability} (local sensing radius, stale maps, 50\% observation loss), \emph{extreme stress} (20\% walls, two fire fronts, exits collapsing mid-run), and \emph{compute-budget-matched} ACO. Results are unambiguous. Directed policies beat random walking by $d\geq11$. Per-tick A* dominates the full pheromone stack in every visibility regime ($|\bar{d}|=5$--$6$ points, Holm $p\leq0.002$, $d_z\geq0.66$); partial observability does not flip the ordering because soft hazard costs degrade gracefully on small maps while stigmergy keeps paying detour costs. Under extreme stress completion collapses to $0.40$--$0.53$ for everyone and the ordering \emph{reverses}: greedy BFS-distance significantly outperforms A* (Holm $p{=}0.049$), which over-commits agents to an exit that later burns. Cutting ACO compute $10\times$ (182$\to$19 s/run) leaves its quality unchanged, so budget-matching cannot rescue it. We conclude that on fully observable small grids---and even under sensory deprivation there---stigmergy purchases nothing over replanning at any compute level; its remaining promise lies in regimes this study deliberately bounds out (large partial maps, communication-limited swarms), for which the released harness provides direct instrumentation.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -59,26 +61,26 @@ Fire grows logistically toward saturation, $f\!\leftarrow\!f+\eta_g(1{-}f)$ with
 \section{CMS-DACO Design}
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}[node distance=4mm and 7mm,
-  box/.style={draw,rounded corners,align=center,inner sep=3pt,font=\scriptsize},
-  lab/.style={font=\tiny,align=center}]
+\resizebox{0.98\columnwidth}{!}{%
+\begin{tikzpicture}[node distance=3mm and 5mm,
+  box/.style={draw,rounded corners,align=center,inner sep=2.5pt,font=\tiny},
+  lab/.style={font=\tiny,inner sep=1pt}]
 \node[box] (haz) {Hazard engine\\fire/smoke/wind};
-\node[box, right=of haz] (grid) {Grid state\\types, $f,s$, occupancy};
-\node[box, right=of grid] (planner) {CMS-DACO planner\\$\tau,\tau_s,\tau_c$ + ACO choice};
+\node[box, right=of haz] (grid) {Grid state\\types, $f,s$, occ.};
+\node[box, right=of grid] (planner) {Planner\\ACO / A* / D* Lite};
 \node[box, right=of planner] (agents) {Agents\\move/exit/casualty};
-\node[box, below=7mm of planner] (metrics) {Metrics / session tracker};
-\node[box, left=of metrics] (viz) {Visualization (async UI)};
+\node[box, below=5mm of planner] (metrics) {Metrics / session tracker};
+\node[box, left=of metrics] (viz) {Async UI (2\,Hz)};
 \draw[-Stealth] (haz)--(grid);
 \draw[-Stealth] (grid)--(planner);
 \draw[-Stealth] (planner)--(agents);
 \draw[-Stealth] (agents)--(grid);
-\draw[-Stealth] (agents)--(metrics);
-\draw[-Stealth] (grid)--(metrics);
+\draw[-Stealth] (agents.south) |- ++(0,-2mm) -| (metrics.north);
+\draw[-Stealth] (grid.east) -- ++(1.5mm,0) |- (metrics.west);
 \draw[-Stealth] (metrics)--(viz);
-\draw[-Stealth,dashed] (metrics.east) -- ++(6mm,0) |- node[pos=0.75,right,lab]{pheromone update\\$\tau\leftarrow(1-\rho)\tau+\Delta$} (planner.south east);
-\draw[-Stealth,dashed] (haz.south) |- node[below,lab]{wind params} (viz.west);
-\end{tikzpicture}
-\caption{Closed loop: the hazard engine writes the grid state; the planner reads state and pheromone channels, agents act, and metrics feed both pheromone updates and the asynchronous frontend.}
+\draw[-Stealth,dashed] (metrics.north) -- node[right,lab]{pheromone update} (planner.south);
+\end{tikzpicture}}
+\caption{Closed loop: hazard engine writes the grid state; planners (stigmergic or classical) read belief state and pheromone channels; agents act; metrics feed pheromone updates and the throttled frontend.}
 \label{fig:arch}
 \end{figure}
 
@@ -105,12 +107,21 @@ where $\tau_m$ blends channels $\tau_m=0.5\tau+0.5\tau_s-\tfrac12\tau_c$ (floore
 If an agent's BFS distance strictly increases for $k{=}6$ consecutive ticks, recent trail cells are suppressed ($\times0.5$) and a hybrid scorer (distance $0.7$, pheromone $0.35$, hazard $0.55$, congestion $0.18$ weights) overrides one move; a global window triggers when $\geq18\%$ of agents stagnate. The backend steps in a worker thread emitting tick snapshots; the Qt frontend renders at $\sim$2\,Hz, so visualization never gates simulation throughput. All experiments below run headless.
 
 \section{Baselines}
-\textbf{Random}: uniform legal neighbor. \textbf{Distance}: greedy on BFS distance with the same candidate filter and small stochastic tie-breaks. \textbf{Hazard-aware A*}: every tick, Dijkstra/A* from the agent to the nearest allowed exit over edge costs $c(u)=1+15f(u)+4s(u)+2.5|O_u|(+8$ if $u$ is a compromised exit$)$, Manhattan heuristic, first step executed. \textbf{Standard ACO}: the full stack minus dual channel, predictive congestion, escape mechanism, and hazard forecasting (single channel, plain deposits). \textbf{Full CMS-DACO}: everything enabled. All directed policies share identical movement filtering, collision resolution, casualty rules, and exit-compromise logic; they differ \emph{only} in target selection.
+\textbf{Random}: uniform legal neighbor. \textbf{Distance}: greedy on BFS distance with the same candidate filter and small stochastic tie-breaks. \textbf{Hazard-aware A*}: every tick, Dijkstra/A* from the agent to the nearest allowed exit over edge costs $c(u)=1+15f(u)+4s(u)+2.5|O_u|(+8$ if $u$ is a compromised exit$)$, Manhattan heuristic, first step executed. \textbf{D* Lite}: the incremental replanning algorithm of Koenig \& Likhachev~\cite{koenig2002}, maintaining per-agent $g/\mathrm{rhs}$ tables over the same cost function; only cells whose belief value actually changed (plus their predecessors) are updated between ticks, with $k_m$ accruing as the agent moves; per-tick expansions are capped at 600. \textbf{Standard ACO}: the full stack minus dual channel, predictive congestion, escape mechanism, and hazard forecasting (single channel, plain deposits). \textbf{Full CMS-DACO}: everything enabled. All directed policies share identical movement filtering, collision resolution, casualty rules, and exit-compromise logic; they differ \emph{only} in target selection.
+
+\section{Partial Observability Model}
+Planners read \emph{belief} fields $\tilde{f},\tilde{s}$ instead of ground truth; physics (fire growth, casualties) always uses truth. Three degradation mechanisms isolate different information failures:
+\begin{itemize}
+\item \textbf{Local sensing} ($r{=}3$): each tick, every agent writes true values within Manhattan radius 3 of itself onto a shared belief map; unobserved cells hold their last-seen (initially zero) value.
+\item \textbf{Stale map}: belief equals a full snapshot taken every $\Delta t{=}5$ ticks.
+\item \textbf{Observation loss}: per tick, each cell is refreshed to truth independently with probability $0.5$.
+\end{itemize}
+Full knowledge is the degenerate case. Pheromone deposits require only local presence and are therefore untouched by the gating---exactly the asymmetry that stigmergy is hypothesized to exploit.
 
 \section{Experimental Setup}
-Environments: \emph{open} ($15^2$, 30 agents, 3 exits, wall density $0.08$, no wind) and \emph{hard} (same, wall density $0.15$, one uniformly chosen exit pre-blocked and ignited to $f{=}0.5$, wind East $0.5$). Tick budget 40; typical runs finish in 15--31 ticks. Each policy$\times$condition uses seeds $1..30$ ($N{=}30$); grid layout, fire origin, agent placement derive deterministically from the seed. We report mean $\pm$ 95\% CI (normal approximation; $t_{29}\approx2.045$ gives nearly identical bounds), Welch two-sided $t$-tests, and Cohen's $d$ with pooled SD. Metrics: completion $=n_{\text{evac}}/n$, casualty rate, mean evacuation ticks (evacuated only), mean path length (evacuated only), congestion exposure ratio (fraction of recorded ticks whose peak blurred occupancy exceeded 1), and total ticks. Hardware: one desktop CPU core per worker process; all code Python 3.11, NumPy 1.26.
+Environments: \emph{open} ($15^2$, 30 agents, 3 exits, wall density $0.08$, no wind), \emph{hard} (same, wall density $0.15$, one uniformly chosen exit pre-blocked and ignited to $f{=}0.5$, wind East $0.5$), and \emph{extreme} ($15^2$, 45 agents, wall density $0.20$, two simultaneous fire origins, wind East $0.8$, and exits collapsing mid-run: one pre-blocked, two more at ticks 12 and 24). Tick budget 40 (60 for extreme); typical runs finish in 15--31 ticks. Each policy$\times$condition uses seeds $1..30$; because layout, fire origin, and agent placement derive deterministically from the seed index, observations across policies are \emph{naturally paired}. All significance statements therefore use paired tests: paired t, Wilcoxon signed-rank, percentile-bootstrap CIs of the paired mean difference (20k resamples), with Holm correction within each result family. We report mean $\pm$ 95\% CI and paired effect size $d_z$. Metrics: completion $=n_{\text{evac}}/n$, casualty rate, evacuation ticks and path length over evacuated agents, congestion-exposure ratio, total ticks, and wall-clock seconds per run.
 
-Default hyperparameters were fixed a priori from literature-plausible ranges ($\alpha{=}1.35,\beta{=}3.2,\rho{=}0.009,T{=}0.45$, ant parameters $\alpha_a{=}1.0,\beta_a{=}2.7,\rho_a{=}0.012,I{=}300,Q_a{=}1.9$) during development on the open-map family; Section~VII-C shows formal sweeps exhibit flat response, so results do not hinge on tuning.
+Default hyperparameters were fixed a priori from literature-plausible ranges during development on the open family; Section~VII-C shows flat sweeps, so results do not hinge on tuning (the circularity of this defense is noted in Sec.~VIII).
 
 \section{Results}
 \begin{table}[t]
@@ -140,9 +151,11 @@ Full CMS-DACO & .974$\pm$.014 & .022$\pm$.013 & .930$\pm$.033 & .047$\pm$.028\\
 \end{figure}
 
 \subsection{Directed policies vs.\ random; A* vs.\ DACO}
-Table~\ref{tab:main} and Fig.~\ref{fig:baselines} give the headline picture. Random walking collapses ($0.13$ open, $0.074$ hard), confirming the task is non-trivial. Every directed policy evacuates $93$--$99\%$. Within the directed group, hazard-aware A* is best everywhere: vs.\ Full CMS-DACO, $d{=}0.81$, $t(58){=}3.14$, $p{=}0.0036$ (open) and $d{=}0.92$, $t(58){=}3.56$, $p{=}0.0011$ (hard); vs.\ Distance, differences favor A* consistently though Distance--DACO gaps are smaller and partly overlap ($p{=}0.083$ open, $p{=}0.35$ hard). ACO variants trail their non-pheromone counterparts on completion \emph{and} on secondary metrics: full-DACO agents walk longer paths ($10.10$ vs.\ $9.05$ ticks open) and evacuate later ($12.17$ vs.\ $11.08$), consistent with pheromone-mediated detours and exploration overhead. Under degradation the ordering is unchanged; the hypothesis that DACO overtakes replanning once exits burn is \emph{not} supported at this information level. Directed-vs-random effect sizes are enormous ($d{=}17$--$29$, $p<10^{-30}$).
+Table~\ref{tab:main} and Fig.~\ref{fig:baselines} give the headline picture. Random walking collapses ($0.130$ open, $0.074$ hard), confirming the task is non-trivial; every directed policy evacuates $93$--$99\%$, and directed-vs-random paired differences are enormous ($d_z{=}11$--$22$, Holm $p{<}10^{-30}$).
 
-Congestion exposure discriminates sharply between routing styles even at equal completion: A*'s cost-aware spacing yields ratio $0.284\pm0.086$, roughly half of Distance ($0.637\pm0.058$) and DACO ($0.615\pm0.063$). In the hard condition, peak occupancy never exceeded one for any policy (ratio $0$ for all): fire-avoidance disperses the crowd faster than bottlenecks form.
+Within the directed group, hazard-aware A* is best everywhere. Against Full CMS-DACO the paired gap is $-2.3$ points (open) and $-6.1$ points (hard): $t(29){=}{-}3.25/{-}3.96$, Holm $p{=}0.009/0.0013$, $d_z{=}0.59/0.72$, bootstrap 95\% CI of the difference entirely below zero in both regimes, corroborated by Wilcoxon ($p{=}0.004/0.0006$). ACO variants also walk longer paths ($10.10$ vs.\ $9.05$ ticks open) and evacuate later ($12.17$ vs.\ $11.08$), consistent with pheromone-mediated detours and softmax exploration overhead. Under degradation the ordering is unchanged: the hypothesis that DACO overtakes replanning once exits burn is \emph{not} supported at this information level.
+
+Congestion exposure discriminates routing styles even at equal completion: A*'s cost-aware spacing yields ratio $0.284\pm0.086$, roughly half of Distance ($0.637\pm0.058$) and DACO ($0.615\pm0.063$). In the hard condition peak occupancy never exceeded one for any policy (ratio $0$ for all): fire-avoidance disperses the crowd faster than bottlenecks form.
 
 \begin{table}[t]
 \centering
@@ -192,20 +205,84 @@ Fig.~\ref{fig:robustness} summarizes environment sweeps for Full CMS-DACO. Compl
 \end{figure}
 
 \subsection{Runtime}
-Per-tick cost is dominated by the number of planning agents. In the open condition a full run averages $\sim$0.3\,s (Distance) to $\sim$0.9\,s (Full DACO). In the hard condition, runs where stragglers survive to the tick budget dominate cost: sequential 30-run totals were $\approx$16\,s (Distance), 24\,s (A*), 2380\,s (Standard ACO), 2580\,s (Full DACO), i.e., the pheromone stack costs $100$--$160\times$ more wall-clock than A* precisely because ant iterations continue while any agent wanders. A*'s advantage is therefore both statistical and computational at this information level.
+Per-tick cost is dominated by the number of planning agents. In the open condition a full run averages $\sim$0.3\,s (Distance) to $\sim$0.9\,s (Full DACO). In the hard condition, runs where stragglers survive to the tick budget dominate cost: sequential 30-run totals were $\approx$16\,s (Distance), 24\,s (A*), 2380\,s (Standard ACO), 2580\,s (Full DACO), i.e., the pheromone stack costs $100$--$160\times$ more wall-clock than A*. Section~\ref{sec:budget} shows this gap cannot be closed by starving the ants.
+
+\subsection{Partial Observability Does Not Flip the Ordering}
+\label{sec:obs}
+Fig.~\ref{fig:observability} and Table~\ref{tab:obs} give the central boundary-condition result on the hard map. A* is essentially \emph{insensitive} to sensory deprivation: completion stays at $0.991$--$0.994$ under local sensing ($r{=}3$), 5-tick-stale maps, and 50\% observation loss. The reason is structural---hazard terms enter planner costs as \emph{soft} penalties on a $15^2$ map whose alternative corridors differ by only a few ticks, so even badly wrong beliefs rarely change the argmin corridor; meanwhile adjacent-cell candidate filtering (shared by all policies) already prevents most fatal steps. Full CMS-DACO likewise barely moves ($0.930$--$0.940$): its pheromone field was never relying on instantaneous global knowledge to begin with.
+
+The consequence is that the stigmergic advantage hypothesized under degraded information does not materialize: paired DACO-vs-A* gaps remain $-5.3$ to $-6.3$ points in every regime (Holm $p\leq0.0022$, $d_z=0.66$--$0.85$, Wilcoxon $p\leq0.0007$). D* Lite tracks A* closely under degradation ($0.986$--$0.994$) though it starts lower with full knowledge ($0.957$, wide CI) and its extreme-regime variant hits an implementation ceiling noted below.
+
+\begin{table}[t]
+\centering
+\caption{Partial observability on the hard map ($N{=}30$ paired seeds). Completion mean$\pm$95\% CI.}
+\label{tab:obs}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{lccc}
+\toprule
+Visibility & A* & D* Lite & Full DACO\\
+\midrule
+Full knowledge & .991$\pm$.009 & .957$\pm$.036 & .930$\pm$.033\\
+Local sensing $r{=}3$ & .994$\pm$.006 & .994$\pm$.006 & .932$\pm$.026\\
+Stale map $\Delta t{=}5$ & .993$\pm$.007 & .986$\pm$.012 & .930$\pm$.027\\
+50\% observation loss & .993$\pm$.006 & .990$\pm$.010 & .940$\pm$.029\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.88\columnwidth]{figures/fig_observability.pdf}
+\caption{Completion vs.\ visibility regime (hard map, $N{=}30$ paired seeds). Partial observability does not change the ranking; A* remains above the pheromone stack everywhere.}
+\label{fig:observability}
+\end{figure}
+
+\subsection{Extreme Stress Breaks the Ceiling --- and Reverses the Ordering}
+\label{sec:extreme}
+The open/hard maps produce a ceiling ($93$--$100\%$) that limits resolution. The extreme environment (Sec.~VI) does what ablations could not: completion collapses to $0.40$--$0.53$ for every policy (Fig.~\ref{fig:extreme}), and the ordering \emph{changes}. Greedy BFS-distance now significantly beats per-tick A* on completion ($+3.7$ points, Holm $p{=}0.049$, $d_z{=}0.43$, Wilcoxon $p{=}0.027$) while suffering less than half its casualty rate ($.163{\pm}.024$ vs.\ $.277{\pm}.043$); Full DACO also edges out A* ($+4.8$, Holm $p{=}0.047$). The mechanism is over-commitment: A* routes the whole crowd toward the single currently-cheapest exit, which the environment then ignites at tick 12 or 24, trapping a dense platoon; greedy distance spreads agents across exits from tick one and loses less when any exit burns. D* Lite fares worst ($0.404{\pm}.041$; vs.\ A*, Holm $p{<}10^{-6}$) --- with hundreds of belief cells changing per tick, our capped-expansion implementation propagates repairs too slowly once two fronts advance simultaneously; we flag this as an implementation limit rather than a property of the algorithm class.
+
+Two lessons follow. First, \emph{robustness-to-change can beat optimality-under-forecast} precisely when hazards target concentrated flows; hedged routing (or explicit exit-capacity constraints) is the natural fix for A*, not more lookahead. Second, none of this favors stigmergy either: DACO matches but does not beat plain distance here ($p{=}0.61$).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.82\columnwidth]{figures/fig_extreme.pdf}
+\caption{Extreme stress ($N{=}30$): completion collapses for all policies and greedy Distance significantly overtakes A* (Holm $p{=}0.049$), which over-commits to exits that later burn.}
+\label{fig:extreme}
+\end{figure}
+
+\subsection{Compute-Budget Matching Cannot Rescue the Ants}
+\label{sec:budget}
+A fair objection to Sec.~VII-A/B is that 300 ant iterations plus large reroute budgets stack the runtime deck. We therefore scale \emph{all} ACO compute jointly---precompute iterations, periodic/emergency reroute iterations, per-tick budget---by $\{1,\tfrac13,\tfrac1{10},\tfrac1{30}\}$ (levels B1--B4) on the hard map. Fig.~\ref{fig:budget}: completion is statistically flat from B1 to B4 ($.930{\pm}.033 \to .936{\pm}.024$; B3 is nominally best at $.952{\pm}.024$) while wall-clock falls $182\to19$ s/run, i.e., a $10\times$ cheaper DACO equals its full-budget self and still loses to A* ($0.991$ at ${\sim}0.8$ s/run). Starving the ants neither helps nor hurts quality---the pheromone signal is not the binding constraint---so the completion gap to replanning is robust to any compute allocation.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.78\columnwidth]{figures/fig_budget.pdf}
+\caption{Budget-matched ACO (hard map, $N{=}30$): cutting ant compute $10\times$ leaves completion unchanged; A* dominates at every budget level.}
+\label{fig:budget}
+\end{figure}
 
 \section{Discussion and Threats to Validity}
-\textbf{Why does replanning win?} With full observability and deterministic-per-tick hazard updates, cached stigmergy is a lossy summary of information the agent already possesses; softmax exploration converts some of that redundancy into detours. A*'s per-tick recomputation exploits the same information exactly. This mirrors findings elsewhere that learned/cached guidance helps mainly under partial observability or stale information.
+\textbf{Answering the boundary-condition question.} The four degradations tested here---worse maps, sensory deprivation (radius, staleness, loss), extreme dynamism, and compute starvation---span the regimes most commonly invoked to justify stigmergy. In none of them does the pheromone stack beat replanning: partial observability leaves A* untouched because soft hazard costs on small maps rarely change the argmin corridor; extreme stress rewards \emph{flow hedging}, which greedy distance provides for free and pheromones only partially; and quality is invariant to ant compute. The honest conclusion is that on fully observable, small-to-medium grids with per-tick replanning available, cached trail guidance is dominated---not merely outperformed at one operating point.
 
-\textbf{When might DACO still matter?} Trails are written by agents and readable without a central solver; they persist useful structure under intermittent sensing, communication-constrained swarms, or when central computation is unavailable/untrusted. Our testbed exposes hooks (masking the planner's view of $f,s$, delaying hazard observations, restricting inter-agent visibility) to test those regimes; we did not run them here and make no claims.
+\textbf{Why distance beats A* under collapse.} A* minimizes expected cost under current beliefs; when the environment adversarially invalidates those beliefs (exits ignite after commitment), optimality becomes over-commitment. Hedged variants---penalizing exit crowding explicitly, stochasticizing target choice, or replanning with risk measures---are obvious remedies and a concrete direction this benchmark exposes.
 
-\textbf{Threats.} (i) Grid abstraction and synchronous ticks abstract away continuous-space effects; (ii) the hazard field is a lightweight cellular model calibrated for stress generation, not validated against FDS/CFAST---absolute survival rates should not be quoted as fire-engineering predictions; (iii) single map-size family beyond the $20^2$ robustness point; (iv) $N{=}30$ resolves effects $\gtrsim d{=}0.5$ comfortably but cannot exclude sub-point differences; (v) hyperparameters were selected informally on the open family before formal evaluation, mitigated by the flat sweeps.
+\textbf{When might stigmergy still matter?} Trails are written by agents and readable without a central solver or fresh global sensing. The remaining candidates are large maps where per-tick all-agents Dijkstra is genuinely expensive, communication-banned swarms, and heterogeneous sensing. Our harness instruments exactly these knobs (per-policy belief masks, sensor radii, map size); scaling beyond $15^2$--$20^2$ is the designated next experiment, and nothing in this paper should be read as foreclosing it.
+
+\textbf{Threats.} (i) Grid abstraction and synchronous ticks abstract away continuous-space effects; scale is limited to $\leq20^2$, 45 agents. (ii) The hazard field is a lightweight cellular model calibrated for stress generation, not validated against FDS/CFAST---absolute survival rates must not be read as fire-engineering predictions. (iii) Single map-size family beyond one $20^2$ robustness point; single-machine timing. (iv) $N{=}30$ paired seeds resolve $d_z\gtrsim0.5$ comfortably but cannot exclude sub-point differences; Holm families are per-section. (v) Hyperparameters were selected informally on the open family before formal evaluation; the flat sweeps mitigate but do not eliminate this circularity. (vi) Our D* Lite caps expansions at 600/tick and uses a shared-belief cost model; stronger implementations could close its extreme-regime gap, though A*'s own reversal there suggests conclusions about replanning-class policies are robust to this choice.
 
 \section{Conclusion}
-CMS-DACO provides a fully reproducible pipeline---simulator, hazard engine, five policies, ablations, sweeps, statistics, and figures---for studying evacuation routing under spreading hazards. Its empirical verdict is clear and, we argue, useful: with matched information, per-tick A* dominates ACO-based routing on completion, quality-of-path, and runtime in grid worlds, while no pheromone subcomponent shows significant marginal value; conversely, all directed policies crush random walking, and the system behaves predictably across crowds, winds, and obstacle densities up to severe blockage. We release everything needed to extend the study to the partial-observability and communication-limited regimes where stigmergic coordination remains genuinely promising.
+Across open, degraded, partially observable, extremely dynamic, and compute-starved regimes---120 policy-environment cells, 3{,}600+ paired simulation runs---the empirical answer to ``when does stigmergic routing help evacuation?'' is: \emph{not in any regime tested}. Replanning dominates wherever information is sufficient for it to be computed in time; where information fails or the world turns adversarial, simple hedged heuristics rather than stigmergy capture the robustness margin. CMS-DACO's lasting contribution is therefore the benchmark itself: matched-information baselines up to and including incremental search, paired-seed statistics, ceiling-breaking stress design, and budget-matched fairness---packaged so that the next claim of ACO superiority can be tested in minutes rather than asserted.
 
 \section*{Reproducibility}
-Repository: \url{https://github.com/Sathvikar01/Fire_Evacuation_System}. Harness entry points: \texttt{experiments/run\_baselines.py}, \texttt{run\_hard\_conditions.py}, \texttt{run\_ablation.py}, \texttt{run\_sensitivity.py}, \texttt{run\_robustness.py}; aggregation and statistics in \texttt{compute\_stats.py}; figures from stored finals in \texttt{make\_figures.py}. Raw per-seed JSONs, merged summaries (\texttt{*\_final\_*}), and \texttt{stats\_summary.json} ship with the repository.
+All code, raw per-seed results, merged summaries, statistics, and figures are
+released at
+\href{https://github.com/Sathvikar01/Fire_Evacuation_System}{\texttt{github.com/Sathvikar01/Fire\_Evacuation\_System}}.
+Entry points: \texttt{run\_baselines}, \texttt{run\_hard\_conditions},
+\texttt{run\_ablation}, \texttt{run\_sensitivity}, \texttt{run\_robustness},
+\texttt{run\_extreme}, \texttt{run\_observability}, \texttt{run\_budget};
+statistics via \texttt{compute\_stats\_paired.py}; figures via
+\texttt{make\_figures.py}. Every table/figure in this paper regenerates from
+stored JSON artifacts (3{,}600+ runs shipped).
 
 \begin{thebibliography}{25}
 
